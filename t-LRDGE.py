@@ -116,7 +116,10 @@ class TRPCA:
 
     def ADMM(self, left_mat, right_mat, X, Y):
         """
-        全流程 Batch 并行优化的 ADMM 算法
+        全流程 Batch 并行优化的 ADMM 算法 (最终修正版)
+        1. 修复 SVD 收敛问题 (robust_svd)
+        2. 修复 vmap 兼容性 (diagonal)
+        3. 修复 complex clamp 兼容性 (实虚部分离)
         """
         # 1. 维度与设备准备
         X = X.to(self.device)
@@ -124,8 +127,43 @@ class TRPCA:
         
         l, m, n = X.shape  
 
-        # === 核心修改：智能识别输入格式 ===
-        # 原矩阵大小 (d*n, d*n) 或 Batch (n, d, d)
+        # === 内部辅助函数: 鲁棒 SVD ===
+        def robust_svd(A, name="Unknown"):
+            # 1. NaN/Inf 检查与修复
+            if torch.isnan(A).any() or torch.isinf(A).any():
+                print(f"警告: {name} 矩阵包含 NaN/Inf，正在重置为随机小矩阵以避免崩溃...")
+                A = 1e-6 * torch.randn_like(A)
+            
+            # 2. 尝试 SVD
+            try:
+                # 优先尝试标准 svd
+                return torch.linalg.svd(A, full_matrices=False)
+            except RuntimeError:
+                # 失败回退: 添加扰动重试
+                # print(f"SVD 警告: {name} 收敛失败，尝试添加扰动重试...")
+                eps = 1e-5
+                if A.is_complex():
+                    noise = torch.randn_like(A) + 1j * torch.randn_like(A)
+                else:
+                    noise = torch.randn_like(A)
+                A_noisy = A + eps * noise
+                
+                try:
+                    return torch.linalg.svd(A_noisy, full_matrices=False)
+                except RuntimeError:
+                    # 再次失败，尝试使用旧版 torch.svd (如果存在且不同于 linalg)
+                    try:
+                        # 注意：torch.svd 的 V 是转置过的，linalg.svd 的 Vh 是共轭转置的
+                        # 这里为了统一接口，我们尽量返回 U, S, Vh
+                        U, S, V = torch.svd(A) # V is (..., N, K)
+                        Vh = V.conj().transpose(-2, -1)
+                        return U, S, Vh
+                    except:
+                        # 彻底失败，返回零解
+                        print(f"SVD 严重错误: {name} 彻底无法分解，返回零解。")
+                        return torch.zeros_like(A), torch.zeros(A.shape[0], min(A.shape[1], A.shape[2])).to(A.device), torch.zeros_like(A)
+
+        # 智能识别输入格式
         def big_to_batch(big_mat, n_freq):
             if not torch.is_tensor(big_mat):
                 big_mat = torch.from_numpy(big_mat).to(self.device).to(torch.complex64)
@@ -136,12 +174,9 @@ class TRPCA:
                 batch_mat[i] = big_mat[i*dim_small:(i+1)*dim_small, i*dim_small:(i+1)*dim_small]
             return batch_mat
 
-        # 如果输入已经是 3D (n, d, d)，直接使用；否则转换
         if hasattr(left_mat, 'ndim') and left_mat.ndim == 3:
-            print("检测到优化后的 Batch 图矩阵，直接使用。")
             left_batch = left_mat.to(self.device)
         else:
-            print("检测到传统大矩阵，正在转换为 Batch 模式...")
             left_batch = big_to_batch(left_mat, n)
 
         if hasattr(right_mat, 'ndim') and right_mat.ndim == 3:
@@ -150,10 +185,10 @@ class TRPCA:
             right_batch = big_to_batch(right_mat, n)
 
         c = Y.shape[0]
-        r = 30 # 降维后的维度
+        r = 30 
         rho = 1.1
         mu = 1e-2
-        mu_max = 1e10
+        mu_max = 1e6
         max_iters = 100
         lamb = 1
         beita = 1
@@ -163,8 +198,15 @@ class TRPCA:
         L = torch.zeros((l, m, n), device=self.device)
         M = torch.zeros((l, m, n), device=self.device)
         E = torch.zeros((r, m, n), device=self.device)
-        P = torch.zeros((r, l, n), device=self.device)
-        Q = torch.zeros((r, l, n), device=self.device)
+        
+        # 初始化 P 为随机正交矩阵 (非常重要，防止 Iter 0 SVD 崩溃)
+        P = torch.randn((r, l, n), device=self.device) + 0j
+        for i in range(n):
+            u, _, vt = torch.linalg.svd(P[:, :, i], full_matrices=False)
+            P[:, :, i] = torch.matmul(u, vt)
+        P = P.real 
+            
+        Q = P.clone()
         W = torch.zeros((c, r, n), device=self.device)
         G = torch.zeros((c, l, n), device=self.device)
         
@@ -178,10 +220,20 @@ class TRPCA:
         print(f"ADMM 开始优化: 输入 X={X.shape}, 类别={c}")
 
         for iters in range(max_iters):
+            # -----------------------------------------------------------------
             # 1. Update M
-            M_new = self.SVDShrink(L + W2/mu, 1/mu)
+            # -----------------------------------------------------------------
+            Target_M = L + W2/mu
+            M_new_f = torch.fft.fft(Target_M, dim=2).permute(2,0,1)
+            Um, Sm, Vhm = robust_svd(M_new_f, "M_Update")
+            
+            Sm_new = self.SoftShrink(Sm, 1/mu)
+            M_batch = torch.matmul(Um, Sm_new.unsqueeze(-1) * Vhm)
+            M_new = torch.fft.ifft(M_batch.permute(1,2,0), dim=2).real
 
+            # -----------------------------------------------------------------
             # 2. Update L
+            # -----------------------------------------------------------------
             X_f = torch.fft.fft(X, dim=2).permute(2,0,1)
             P_f = torch.fft.fft(P, dim=2).permute(2,0,1)
             M_f = torch.fft.fft(M_new, dim=2).permute(2,0,1)
@@ -192,33 +244,48 @@ class TRPCA:
             Ph = P_f.conj().transpose(1, 2)
             Term1 = torch.matmul(Ph, torch.matmul(P_f, X_f) - E_f + W1_f/mu)
             Term2 = M_f - W2_f/mu
-            LHS_inv = torch.linalg.inv(torch.matmul(Ph, P_f) + I_batch)
-            L_new_f = torch.matmul(LHS_inv, Term1 + Term2)
+            
+            LHS = torch.matmul(Ph, P_f) + I_batch
+            RHS = Term1 + Term2
+            
+            # 使用 solve 替代 inv
+            try:
+                L_new_f = torch.linalg.solve(LHS, RHS)
+            except:
+                LHS = LHS + 1e-6 * I_batch # 正则化防止奇异
+                L_new_f = torch.linalg.solve(LHS, RHS)
+                
             L_new = torch.fft.ifft(L_new_f.permute(1,2,0), dim=2).real
 
+            # -----------------------------------------------------------------
             # 3. Update E
+            # -----------------------------------------------------------------
             PX = self.T_product(P, X)
             PL = self.T_product(P, L_new)
             E_new = self.SoftShrink(PX - PL + W1/mu, lamb/mu)
 
+            # -----------------------------------------------------------------
             # 4. Update W, G
+            # -----------------------------------------------------------------
             G_f = torch.fft.fft(G, dim=2).permute(2,0,1)
             W3_f = torch.fft.fft(W3, dim=2).permute(2,0,1)
-            P_f = torch.fft.fft(P, dim=2).permute(2,0,1)
             
             Target_W = torch.matmul(G_f - W3_f/mu, P_f.conj().transpose(1, 2))
-            Uw, _, Vhw = torch.linalg.svd(Target_W, full_matrices=False)
+            Uw, _, Vhw = robust_svd(Target_W, "W_Update")
             W_new_f = torch.matmul(Uw, Vhw)
             W_new = torch.fft.ifft(W_new_f.permute(1,2,0), dim=2).real
             
             Y_f = torch.fft.fft(Y, dim=2).permute(2,0,1)
             Xh = X_f.conj().transpose(1, 2)
-            W_new_f = torch.fft.fft(W_new, dim=2).permute(2,0,1)
-            Target_G = beita * torch.matmul(Y_f, Xh) + (mu/2)*(torch.matmul(W_new_f, P_f) + W3_f/mu)
-            Ug, _, Vhg = torch.linalg.svd(Target_G, full_matrices=False)
+            W_new_f_curr = torch.fft.fft(W_new, dim=2).permute(2,0,1)
+            
+            Target_G = beita * torch.matmul(Y_f, Xh) + (mu/2)*(torch.matmul(W_new_f_curr, P_f) + W3_f/mu)
+            Ug, _, Vhg = robust_svd(Target_G, "G_Update")
             G_new = torch.fft.ifft(torch.matmul(Ug, Vhg).permute(1,2,0), dim=2).real
 
+            # -----------------------------------------------------------------
             # 5. Update P
+            # -----------------------------------------------------------------
             Eb_f = torch.fft.fft(E_new, dim=2).permute(2,0,1)
             Lb_f = torch.fft.fft(L_new, dim=2).permute(2,0,1)
             Qb_f = torch.fft.fft(Q, dim=2).permute(2,0,1)
@@ -227,15 +294,19 @@ class TRPCA:
             
             Diff_XL = X_f - Lb_f
             M1 = torch.matmul(Eb_f - W1_f/mu, Diff_XL.conj().transpose(1,2))
-            Wh_f = W_new_f.conj().transpose(1, 2)
+            Wh_f = W_new_f_curr.conj().transpose(1, 2)
             M2 = torch.matmul(Wh_f, Gb_f - W3_f/mu)
             M3 = Qb_f - W4_f/mu
+            
             M_total = M1 + M2 + M3
-            Up, _, Vhp = torch.linalg.svd(M_total, full_matrices=False)
+            Up, _, Vhp = robust_svd(M_total, "P_Update")
+            
             P_new_f = torch.matmul(Up, Vhp)
             P_new = torch.fft.ifft(P_new_f.permute(1,2,0), dim=2).real
 
+            # -----------------------------------------------------------------
             # 6. Update Q
+            # -----------------------------------------------------------------
             Pb_f = P_new_f 
             W4b_f = W4_f
             Q_curr = torch.fft.fft(Q, dim=2).permute(2,0,1)
@@ -250,16 +321,30 @@ class TRPCA:
                 QD = torch.matmul(Q_curr, right_batch)
                 
                 Grad = 2 * gama * QL - mu * Diff + 2 * lambda_val * QD
+                
+                # 【修改处】复数 Clamp: 实部虚部分开截断
+                Grad_r = torch.clamp(Grad.real, -1e5, 1e5)
+                Grad_i = torch.clamp(Grad.imag, -1e5, 1e5)
+                # 重新组合
+                if torch.is_complex(Grad):
+                    Grad = torch.complex(Grad_r, Grad_i)
+                else:
+                    Grad = Grad_r # 如果因为某种原因变成了实数
+                
                 Q_curr = Q_curr - q_lr * Grad
                 
                 QDQ = torch.matmul(Q_curr, torch.matmul(right_batch, Q_curr.conj().transpose(1,2)))
-                tr_val = torch.real(torch.vmap(torch.trace)(QDQ)).sum()
+                # 修复 vmap: 使用 diagonal
+                tr_val = torch.real(torch.sum(torch.diagonal(QDQ, dim1=1, dim2=2)))
+                
                 grad_lambda = tr_val - 1
                 lambda_val = lambda_val + q_lr * grad_lambda
             
             Q_new = torch.fft.ifft(Q_curr.permute(1,2,0), dim=2).real
 
+            # -----------------------------------------------------------------
             # 7. Update Multipliers
+            # -----------------------------------------------------------------
             term1 = self.T_product(P_new, X) - self.T_product(P_new, L_new) - E_new
             W1 = W1 + mu * term1
             W2 = W2 + mu * (L_new - M_new)
@@ -267,7 +352,13 @@ class TRPCA:
             W3 = W3 + mu * term3
             term4 = P_new - Q_new
             W4 = W4 + mu * term4
+            
             mu = min(rho * mu, mu_max)
+
+            # Check NaN
+            if torch.isnan(P_new).any():
+                print("Error: P became NaN. Stopping.")
+                break
 
             M, L, E, P, W, G, Q = M_new, L_new, E_new, P_new, W_new, G_new, Q_new
 
@@ -349,18 +440,18 @@ if __name__ == '__main__':
             image[:, :, band] = (image[:, :, band] - mi) / (ma - mi)
 
     # 2. 添加噪声
-    np.random.seed(42)
-    noisy_image = np.copy(image)
-    selected_bands = np.random.choice(image.shape[2], size=min(30, image.shape[2]), replace=False)
-    for i in selected_bands:
-        variance = np.random.uniform(0, 0.5)
-        noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
-        noisy_image[..., i] += noise
-        salt = np.random.rand(*image[..., i].shape) < 0.05
-        pepper = np.random.rand(*image[..., i].shape) < 0.05
-        noisy_image[salt, i] = np.max(image[..., i])
-        noisy_image[pepper, i] = np.min(image[..., i])
-    image = noisy_image 
+    # np.random.seed(42)
+    # noisy_image = np.copy(image)
+    # selected_bands = np.random.choice(image.shape[2], size=min(30, image.shape[2]), replace=False)
+    # for i in selected_bands:
+    #     variance = np.random.uniform(0, 0.5)
+    #     noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
+    #     noisy_image[..., i] += noise
+    #     salt = np.random.rand(*image[..., i].shape) < 0.05
+    #     pepper = np.random.rand(*image[..., i].shape) < 0.05
+    #     noisy_image[salt, i] = np.max(image[..., i])
+    #     noisy_image[pepper, i] = np.min(image[..., i])
+    # image = noisy_image 
 
     # 3. 数据集划分
     print("Preparing Datasets...")
@@ -383,34 +474,81 @@ if __name__ == '__main__':
     ours = TRPCA()
     N_train = x_train.shape[1]
 
-    # 4. 构图 (EMD) - 这一步是物理时间开销，不可避免
-    print("Constructing Graph (Using EMD)...")
-    try:
-        ret_half = train_test_tensor_half(PATCH_SIZE, random_idx, image, label)
-        x_train_W = ret_half[0]
-        ci = []
-        b_dim = x_train_W[0].shape[2]
-        for i in range(len(x_train_W)):
-            c_matrix = torch.zeros((b_dim, b_dim))
-            xt = x_train_W[i]
-            if not torch.is_tensor(xt): xt = torch.from_numpy(xt).float()
-            ui = torch.mean(xt, dim=(0, 1), keepdim=True)
-            ui1 = ui.reshape(b_dim, -1)
-            for m in range(PATCH_SIZE):
-                for n in range(PATCH_SIZE):
-                    xt1 = xt[m, n, :].reshape(b_dim, -1)
-                    diff = xt1 - ui1
-                    c_matrix = c_matrix + torch.matmul(diff, diff.T)
-            c_matrix = c_matrix / (PATCH_SIZE * PATCH_SIZE - 1)
-            ci.append(c_matrix)
+    # # 4. 构图 (EMD) - 这一步是物理时间开销，不可避免
+    # print("Constructing Graph (Using EMD)...")
+    # try:
+    #     ret_half = train_test_tensor_half(PATCH_SIZE, random_idx, image, label)
+    #     x_train_W = ret_half[0]
+    #     ci = []
+    #     b_dim = x_train_W[0].shape[2]
+    #     for i in range(len(x_train_W)):
+    #         c_matrix = torch.zeros((b_dim, b_dim))
+    #         xt = x_train_W[i]
+    #         if not torch.is_tensor(xt): xt = torch.from_numpy(xt).float()
+    #         ui = torch.mean(xt, dim=(0, 1), keepdim=True)
+    #         ui1 = ui.reshape(b_dim, -1)
+    #         for m in range(PATCH_SIZE):
+    #             for n in range(PATCH_SIZE):
+    #                 xt1 = xt[m, n, :].reshape(b_dim, -1)
+    #                 diff = xt1 - ui1
+    #                 c_matrix = c_matrix + torch.matmul(diff, diff.T)
+    #         c_matrix = c_matrix / (PATCH_SIZE * PATCH_SIZE - 1)
+    #         ci.append(c_matrix)
 
-        w_mat, d_mat = dist_EMD(x_train_W, ci, 10, 1000)
-        print("EMD Graph constructed.")
+    #     w_mat, d_mat = dist_EMD(x_train_W, ci, 10, 1000)
+    #     print("EMD Graph constructed.")
+    # except Exception as e:
+    #     print(f"Graph failed: {e}. Using Identity.")
+    #     w_mat = np.eye(N_train)
+    #     d_mat = np.eye(N_train)
+# 4. 构图 (使用欧氏距离快速测试)
+    print("Constructing Graph (Using Euclidean for FAST testing)...")
+    try:
+        # 不需要计算复杂的协方差 ci 了，直接用原始数据算距离
+        # x_train: (Band, N, w^2) -> 需要展平为 (N, features)
+        N_train = x_train.shape[1]
+        # 展平数据: (N, Band * w^2)
+        x_flat = x_train.permute(1, 0, 2).reshape(N_train, -1).numpy()
+        
+        # 1. 计算欧氏距离矩阵
+        from scipy.spatial.distance import pdist, squareform
+        # pdist 计算两两距离，squareform 转为 N*N 矩阵
+        dist_mat = squareform(pdist(x_flat, metric='euclidean'))
+        
+        # 2. 构建权重矩阵 W (使用高斯核函数: W_ij = exp(-dist^2 / 2*sigma^2))
+        # sigma 取距离平均值是一个常用的经验法则
+        sigma = np.mean(dist_mat)
+        w_mat = np.exp(-dist_mat**2 / (2 * sigma**2))
+        
+        # 对角线置0 (自己跟自己没有边)
+        np.fill_diagonal(w_mat, 0)
+        
+        # (可选) 只保留 K 近邻，让图稀疏化 (模拟 dist_EMD 中的 k_near)
+        k_near = 10
+        # 对每一行，除了最小的 k 个距离对应的权重外，其余置0
+        # 注意：距离越小，权重越大。我们要保留权重最大的 top-k
+        for i in range(N_train):
+            # 找到最大的 K 个权重的索引
+            # argsort 从小到大排，取最后 k 个就是最大的
+            topk_indices = np.argsort(w_mat[i])[-k_near:]
+            # 创建一个 mask，不在 topk 里的置 0
+            mask = np.zeros_like(w_mat[i], dtype=bool)
+            mask[topk_indices] = True
+            w_mat[i] = w_mat[i] * mask
+
+        # 保证对称性 (如果是 KNN 图通常需要对称化)
+        w_mat = (w_mat + w_mat.T) / 2
+        
+        # 3. 计算度矩阵 D (对角阵，对角元素是 W 每一行的和)
+        d_diag = np.sum(w_mat, axis=1)
+        d_mat = np.diag(d_diag)
+        
+        print("Euclidean Graph constructed instantly.")
+
     except Exception as e:
         print(f"Graph failed: {e}. Using Identity.")
         w_mat = np.eye(N_train)
         d_mat = np.eye(N_train)
-
     # 5. 【矩阵运算极速优化】计算 Laplacian Matrices
     print("Calculating Laplacian Matrices (Vectorized)...")
     
