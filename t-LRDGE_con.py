@@ -155,7 +155,7 @@ class TRPCA:
         rho = 1.1
         mu = 1e-2
         mu_max = 1e6
-        max_iters = 10
+        max_iters = 100
         lamb = 1   # lambda1: for E
         beita = 1  # lambda2: for Discriminative
         gama = 1   # lambda3: for Graph
@@ -323,8 +323,15 @@ class TRPCA:
             Q_term = torch.matmul(Q_curr, torch.matmul(left_batch, Q_curr.conj().transpose(1, 2)))
             obj_graph = gama * torch.real(torch.sum(torch.diagonal(Q_term, dim1=1, dim2=2))).item()
             
-            total_obj = obj_nuc + obj_sparse + obj_discr + obj_graph
-            obj_history.append(total_obj)
+            resid = self.T_product(P_new, X) - self.T_product(P_new, L_new) - E_new
+            resid_norm_sq = (torch.norm(resid) ** 2).item()
+            
+            # 加上 (mu/2) * ||Resid||^2
+            # 注意：这就是 ADMM 真正优化的那个“总能量”
+            lagrangian_obj = obj_nuc + obj_sparse + (mu / 2) * resid_norm_sq
+            
+            # 记录这个值，它大概率是单调下降的
+            obj_history.append(lagrangian_obj)
 
             # Check NaN
             if torch.isnan(P_new).any():
@@ -335,7 +342,7 @@ class TRPCA:
 
             if iters % 10 == 0:
                 err = torch.norm(term1)
-                print(f"Iter {iters:3d}: P*X Recon Err={err:.4f}, Obj={total_obj:.2e}, mu={mu:.2e}")
+                print(f"Iter {iters:3d}: P*X Recon Err={err:.4f}, Obj={lagrangian_obj:.2e}, mu={mu:.2e}")
 
         return M_new, L_new, E_new, P_new, W_new, G_new, Q, obj_history
 
