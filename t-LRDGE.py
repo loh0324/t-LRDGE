@@ -189,7 +189,7 @@ class TRPCA:
         rho = 1.1
         mu = 1e-2
         mu_max = 1e6
-        max_iters = 100
+        max_iters = 500
         lamb = 1
         beita = 1
         gama = 1 
