@@ -475,80 +475,80 @@ if __name__ == '__main__':
     N_train = x_train.shape[1]
 
     # # 4. 构图 (EMD) - 这一步是物理时间开销，不可避免
-    # print("Constructing Graph (Using EMD)...")
-    # try:
-    #     ret_half = train_test_tensor_half(PATCH_SIZE, random_idx, image, label)
-    #     x_train_W = ret_half[0]
-    #     ci = []
-    #     b_dim = x_train_W[0].shape[2]
-    #     for i in range(len(x_train_W)):
-    #         c_matrix = torch.zeros((b_dim, b_dim))
-    #         xt = x_train_W[i]
-    #         if not torch.is_tensor(xt): xt = torch.from_numpy(xt).float()
-    #         ui = torch.mean(xt, dim=(0, 1), keepdim=True)
-    #         ui1 = ui.reshape(b_dim, -1)
-    #         for m in range(PATCH_SIZE):
-    #             for n in range(PATCH_SIZE):
-    #                 xt1 = xt[m, n, :].reshape(b_dim, -1)
-    #                 diff = xt1 - ui1
-    #                 c_matrix = c_matrix + torch.matmul(diff, diff.T)
-    #         c_matrix = c_matrix / (PATCH_SIZE * PATCH_SIZE - 1)
-    #         ci.append(c_matrix)
-
-    #     w_mat, d_mat = dist_EMD(x_train_W, ci, 10, 1000)
-    #     print("EMD Graph constructed.")
-    # except Exception as e:
-    #     print(f"Graph failed: {e}. Using Identity.")
-    #     w_mat = np.eye(N_train)
-    #     d_mat = np.eye(N_train)
-# 4. 构图 (使用欧氏距离快速测试)
-    print("Constructing Graph (Using Euclidean for FAST testing)...")
+    print("Constructing Graph (Using EMD)...")
     try:
-        # 不需要计算复杂的协方差 ci 了，直接用原始数据算距离
-        # x_train: (Band, N, w^2) -> 需要展平为 (N, features)
-        N_train = x_train.shape[1]
-        # 展平数据: (N, Band * w^2)
-        x_flat = x_train.permute(1, 0, 2).reshape(N_train, -1).numpy()
-        
-        # 1. 计算欧氏距离矩阵
-        from scipy.spatial.distance import pdist, squareform
-        # pdist 计算两两距离，squareform 转为 N*N 矩阵
-        dist_mat = squareform(pdist(x_flat, metric='euclidean'))
-        
-        # 2. 构建权重矩阵 W (使用高斯核函数: W_ij = exp(-dist^2 / 2*sigma^2))
-        # sigma 取距离平均值是一个常用的经验法则
-        sigma = np.mean(dist_mat)
-        w_mat = np.exp(-dist_mat**2 / (2 * sigma**2))
-        
-        # 对角线置0 (自己跟自己没有边)
-        np.fill_diagonal(w_mat, 0)
-        
-        # (可选) 只保留 K 近邻，让图稀疏化 (模拟 dist_EMD 中的 k_near)
-        k_near = 10
-        # 对每一行，除了最小的 k 个距离对应的权重外，其余置0
-        # 注意：距离越小，权重越大。我们要保留权重最大的 top-k
-        for i in range(N_train):
-            # 找到最大的 K 个权重的索引
-            # argsort 从小到大排，取最后 k 个就是最大的
-            topk_indices = np.argsort(w_mat[i])[-k_near:]
-            # 创建一个 mask，不在 topk 里的置 0
-            mask = np.zeros_like(w_mat[i], dtype=bool)
-            mask[topk_indices] = True
-            w_mat[i] = w_mat[i] * mask
+        ret_half = train_test_tensor_half(PATCH_SIZE, random_idx, image, label)
+        x_train_W = ret_half[0]
+        ci = []
+        b_dim = x_train_W[0].shape[2]
+        for i in range(len(x_train_W)):
+            c_matrix = torch.zeros((b_dim, b_dim))
+            xt = x_train_W[i]
+            if not torch.is_tensor(xt): xt = torch.from_numpy(xt).float()
+            ui = torch.mean(xt, dim=(0, 1), keepdim=True)
+            ui1 = ui.reshape(b_dim, -1)
+            for m in range(PATCH_SIZE):
+                for n in range(PATCH_SIZE):
+                    xt1 = xt[m, n, :].reshape(b_dim, -1)
+                    diff = xt1 - ui1
+                    c_matrix = c_matrix + torch.matmul(diff, diff.T)
+            c_matrix = c_matrix / (PATCH_SIZE * PATCH_SIZE - 1)
+            ci.append(c_matrix)
 
-        # 保证对称性 (如果是 KNN 图通常需要对称化)
-        w_mat = (w_mat + w_mat.T) / 2
-        
-        # 3. 计算度矩阵 D (对角阵，对角元素是 W 每一行的和)
-        d_diag = np.sum(w_mat, axis=1)
-        d_mat = np.diag(d_diag)
-        
-        print("Euclidean Graph constructed instantly.")
-
+        w_mat, d_mat = dist_EMD(x_train_W, ci, 10, 1000)
+        print("EMD Graph constructed.")
     except Exception as e:
         print(f"Graph failed: {e}. Using Identity.")
         w_mat = np.eye(N_train)
         d_mat = np.eye(N_train)
+# 4. 构图 (使用欧氏距离快速测试)
+    # print("Constructing Graph (Using Euclidean for FAST testing)...")
+    # try:
+    #     # 不需要计算复杂的协方差 ci 了，直接用原始数据算距离
+    #     # x_train: (Band, N, w^2) -> 需要展平为 (N, features)
+    #     N_train = x_train.shape[1]
+    #     # 展平数据: (N, Band * w^2)
+    #     x_flat = x_train.permute(1, 0, 2).reshape(N_train, -1).numpy()
+        
+    #     # 1. 计算欧氏距离矩阵
+    #     from scipy.spatial.distance import pdist, squareform
+    #     # pdist 计算两两距离，squareform 转为 N*N 矩阵
+    #     dist_mat = squareform(pdist(x_flat, metric='euclidean'))
+        
+    #     # 2. 构建权重矩阵 W (使用高斯核函数: W_ij = exp(-dist^2 / 2*sigma^2))
+    #     # sigma 取距离平均值是一个常用的经验法则
+    #     sigma = np.mean(dist_mat)
+    #     w_mat = np.exp(-dist_mat**2 / (2 * sigma**2))
+        
+    #     # 对角线置0 (自己跟自己没有边)
+    #     np.fill_diagonal(w_mat, 0)
+        
+    #     # (可选) 只保留 K 近邻，让图稀疏化 (模拟 dist_EMD 中的 k_near)
+    #     k_near = 10
+    #     # 对每一行，除了最小的 k 个距离对应的权重外，其余置0
+    #     # 注意：距离越小，权重越大。我们要保留权重最大的 top-k
+    #     for i in range(N_train):
+    #         # 找到最大的 K 个权重的索引
+    #         # argsort 从小到大排，取最后 k 个就是最大的
+    #         topk_indices = np.argsort(w_mat[i])[-k_near:]
+    #         # 创建一个 mask，不在 topk 里的置 0
+    #         mask = np.zeros_like(w_mat[i], dtype=bool)
+    #         mask[topk_indices] = True
+    #         w_mat[i] = w_mat[i] * mask
+
+    #     # 保证对称性 (如果是 KNN 图通常需要对称化)
+    #     w_mat = (w_mat + w_mat.T) / 2
+        
+    #     # 3. 计算度矩阵 D (对角阵，对角元素是 W 每一行的和)
+    #     d_diag = np.sum(w_mat, axis=1)
+    #     d_mat = np.diag(d_diag)
+        
+    #     print("Euclidean Graph constructed instantly.")
+
+    # except Exception as e:
+    #     print(f"Graph failed: {e}. Using Identity.")
+    #     w_mat = np.eye(N_train)
+    #     d_mat = np.eye(N_train)
     # 5. 【矩阵运算极速优化】计算 Laplacian Matrices
     print("Calculating Laplacian Matrices (Vectorized)...")
     

@@ -260,7 +260,7 @@ class TRPCA:
             W3 += mu * (self.T_product(W_new,P_new) - G_new)
             W4 += mu * (P_new - Q_new)
             mu = min(rho * mu, mu_max)
-
+        
             if self.converged(M, L, E, P, W, G, X, M_new, L_new, E_new,P_new,W_new,G_new) or iters >= max_iters:
                 return M_new, L_new, E_new, P_new, W_new,G_new,Q_new
             else:
@@ -270,237 +270,280 @@ class TRPCA:
                 print(iters, torch.max(L - M))
                 print(iters, torch.max(self.T_product(W,P) - G))
                 print(iters, torch.max(P - Q))
+                print(iters,mu)
 
 if __name__ =='__main__':
-    for lunshu in range(1, 2):
-        # R = loadmat('./Indian_pines_16Classes.mat')['R']
-        # image = loadmat('/data/LOH/TSPLL_label/dataset/Indian_pines/Indian_pines.mat')['indian_pines_corrected']
-        # label = loadmat('/data/LOH/TSPLL_label/dataset/Indian_pines/Indian_pines_gt.mat')['indian_pines_gt']
-        image = loadmat('/data/LOH/MTensorLPP-main/dataset/WHU-Hi-LongKou/WHU_Hi_LongKou.mat')['WHU_Hi_LongKou']
-        label = loadmat('/data/LOH/MTensorLPP-main/dataset/WHU-Hi-LongKou/WHU_Hi_LongKou_gt.mat')['WHU_Hi_LongKou_gt']
-        # label = loadmat('/data/LOH/TSPLL_label/dataset/Salinas/Salinas.mat')['salinas_gt']
-        # image = loadmat('/data/LOH/TSPLL_label/dataset/Salinas/Salinas.mat')['salinas_corrected']
-        spy.imshow(classes=label)  # 确保 label 是 2D 整数数组
-        plt.axis('off')
-        plt.savefig('/data/LOH/TSPLL_label/longkou-gt.jpg', dpi=300, bbox_inches='tight',interpolation='none')
-        plt.show()
-        '''PCA'''
-        # rows, cols = np.nonzero(label != 0)
-        # coordinates = np.column_stack((rows, cols))
-        # # fea = loadmat('/data/LOH/TSPLL_label/dataset/Salinas/Salinas.mat')['fea']
-        # fea = np.zeros((coordinates.shape[0], image.shape[2]))
-        # for i, j in enumerate(coordinates):
-        #     fea[i, :] = image[j[0], j[1], :]
-        # # 10249*200
-        # pca = PCA(n_components=80)  # 降维到100
-        # pca.fit(fea)
-        # fea_reduced = pca.transform(fea)
-        # x = np.zeros((label.shape[0], label.shape[1], 80))
-        # for i in range(fea.shape[0]):
-        #     a = coordinates[i][0]
-        #     b = coordinates[i][1]
-        #     x[a][b][:] = fea_reduced[i][:]
-        # image = x.astype(np.float32)
+    # for lunshu in range(1, 2):
+    #     # R = loadmat('./Indian_pines_16Classes.mat')['R']
+    #     # image = loadmat('/data/LOH/TSPLL_label/dataset/Indian_pines/Indian_pines.mat')['indian_pines_corrected']
+    #     # label = loadmat('/data/LOH/TSPLL_label/dataset/Indian_pines/Indian_pines_gt.mat')['indian_pines_gt']
+    #     image = loadmat('/data/LOH/MTensorLPP-main/dataset/WHU-Hi-LongKou/WHU_Hi_LongKou.mat')['WHU_Hi_LongKou']
+    #     label = loadmat('/data/LOH/MTensorLPP-main/dataset/WHU-Hi-LongKou/WHU_Hi_LongKou_gt.mat')['WHU_Hi_LongKou_gt']
+    #     # label = loadmat('/data/LOH/TSPLL_label/dataset/Salinas/Salinas.mat')['salinas_gt']
+    #     # image = loadmat('/data/LOH/TSPLL_label/dataset/Salinas/Salinas.mat')['salinas_corrected']
+    #     spy.imshow(classes=label)  # 确保 label 是 2D 整数数组
+    #     plt.axis('off')
+    #     plt.savefig('/data/LOH/TSPLL_label/longkou-gt.jpg', dpi=300, bbox_inches='tight',interpolation='none')
+    #     plt.show()
+    #     '''PCA'''
+    #     # rows, cols = np.nonzero(label != 0)
+    #     # coordinates = np.column_stack((rows, cols))
+    #     # # fea = loadmat('/data/LOH/TSPLL_label/dataset/Salinas/Salinas.mat')['fea']
+    #     # fea = np.zeros((coordinates.shape[0], image.shape[2]))
+    #     # for i, j in enumerate(coordinates):
+    #     #     fea[i, :] = image[j[0], j[1], :]
+    #     # # 10249*200
+    #     # pca = PCA(n_components=80)  # 降维到100
+    #     # pca.fit(fea)
+    #     # fea_reduced = pca.transform(fea)
+    #     # x = np.zeros((label.shape[0], label.shape[1], 80))
+    #     # for i in range(fea.shape[0]):
+    #     #     a = coordinates[i][0]
+    #     #     b = coordinates[i][1]
+    #     #     x[a][b][:] = fea_reduced[i][:]
+    #     # image = x.astype(np.float32)
 
-        '''add noise(0,0.5)零均值高斯噪声    随机生成胡椒和盐噪声的比例(0,0.3)'''
-        image = image.astype(float)
-        for band in range(image.shape[2]):
-            image[:, :, band] = (image[:, :, band] - np.min(image[:, :, band])) / (
-                        np.max(image[:, :, band]) - np.min(image[:, :, band]))
-        np.random.seed(42)
-        noisy_image = np.copy(image).astype(np.float64)
-        selected_bands = np.random.choice(image.shape[2], size=30, replace=False)
-        for i in selected_bands:
-            variance = np.random.uniform(0, 0.5)
-            noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
-            noisy_image[..., i] += noise
-            # 随机生成胡椒和盐噪声的比例(0,0.3)
-            salt = np.random.rand(*image[..., i].shape) < 0.05  # 盐噪声（值为255）
-            pepper = np.random.rand(*image[..., i].shape) < 0.05  # 胡椒噪声（值为0）
-            noisy_image[salt, i] = np.max(image[..., i])  # 设置盐噪声为max
-            noisy_image[pepper, i] = np.min(image[..., i])  # 设置胡椒噪声为min
-        image = noisy_image
-
-
-        # random_idx = np.load('/data/LOH/TSPLL_label/random_idx/random_idx.npy')
-        random_idx_dict = np.load('/data/LOH/TSPLL_label/random_idx/random_idx_longkou_0.2%.npy', allow_pickle=True).item()
-        random_idx = []
-        for class_label, indices in random_idx_dict.items():
-            random_idx.extend(indices['train_indices'])
-
-        PATCH_SIZE = 9
-        x_train, train_label, x_test, test_label ,train_label_list, test_label_list= train_test_tensor_fold(PATCH_SIZE,random_idx, image, label)
-        ours = TRPCA()
-
-        '''计算临近点'''
-        x_train_W, _, _, _ = train_test_tensor_half(PATCH_SIZE,random_idx, image, label)
-        l = len(x_train_W)
-        ci = []
-        b = x_train_W[0].shape[2]
-        for i in range(l):
-            c_matrix = torch.zeros((b, b))
-            xt = x_train_W[i]
-            ui = torch.mean(xt, dim=(0, 1), keepdim=True)
-            ui1 = ui.reshape(b, -1)
-            for m in range(9):
-                for n in range(9):
-                    xt1 = xt[m, n, :].reshape(b, -1)
-                    c_matrix = c_matrix + torch.matmul(xt1 - ui1, (xt1 - ui1).T)
-            c_matrix = c_matrix / 80
-            ci.append(c_matrix)
-        t = 1000
-        k_near = 10
-        w, d = dist_EMD(x_train_W, ci, k_near, t)
-        # np.save('w-1000-indian', w)
-        # np.save('d-1000-indian', d)
-        X_train_fft_list = []
-        for i in range(x_train.shape[1]):
-            x = x_train[:, i, :].reshape(b, 1, 81)
-            x =ours.block_diagonal_fft(x)
-            X_train_fft_list.append(x)
-
-        left ,right= ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
-        left = torch.from_numpy(left)
-        right = torch.from_numpy(right)
-
-        M, L, E, P, W, G, Q= ours.ADMM(left,right,x_train,train_label)
-        X_train_reduced = ours.T_product(P, x_train)
-        X_train_reduced1 = ours.T_product(P, L)
-        X_train_reduced_Q = ours.T_product(Q, x_train)
-        X_train_reduced_Q1 = ours.T_product(Q, L)
-        X_test_reduced = ours.T_product(P, x_test)
-        X_test_reduced_Q = ours.T_product(Q, x_test)
-
-        def nn_unique(x_train, train_label, x_test, test_label, random, label):
-            computedClass = []
-            D = np.zeros((x_test.shape[1], x_train.shape[1]))
-            # 计算距离矩阵
-            for i in range(x_test.shape[1]):
-                current_block = x_test[:, i, :]
-                for j in range(x_train.shape[1]):
-                    neighbor_block = x_train[:, j, :]
-                    w = current_block - neighbor_block
-                    d = torch.linalg.norm(w)
-                    D[i, j] = d
-
-            # 获取每个测试样本的最小距离邻居
-            id = np.argsort(D, axis=1)
-            computedClass.append(np.array(train_label)[id[:, 0]])
-
-            # 将预测类别加入到test_label中（更新标签）
-            updated_test_label = np.copy(test_label)  # 复制原始标签以保留原始信息
-            updated_test_label[:] = computedClass[0]  # 将计算得到的预测标签填入更新后的标签中
-
-            rows, cols = np.nonzero(label != 0)
-            coordinates = np.column_stack((rows, cols))
-
-            label_matrix = np.copy(label)
-            idx_test = np.setdiff1d(range(len(coordinates)), random)
-
-            # Process testing patches 可视化分类结果
-            for test_idx, coord in enumerate(idx_test):
-                i, j = coordinates[coord]
-                label_matrix[i, j] = updated_test_label[test_idx]
-
-            # 计算总精度 OA
-            total_correct = np.sum(updated_test_label == test_label)
-            precision_OA = total_correct / x_test.shape[1]
-
-            # 计算每个类别的精度
-            unique_classes = np.unique(train_label)
-            class_precision = {}
-
-            for cls in unique_classes:
-                # 获取该类别在测试集中的索引
-                test_cls_indices = np.where(test_label == cls)[0]
-                if len(test_cls_indices) == 0:
-                    continue  # 如果没有该类别的测试样本，跳过
-
-                correct_count = 0
-                for idx in test_cls_indices:
-                    # 比较预测标签和真实标签
-                    if updated_test_label[idx] == cls:
-                        correct_count += 1
-
-                # 计算该类别的精度
-                precision = correct_count / len(test_cls_indices)
-                class_precision[cls] = precision
-
-            # 计算平均精度 (AA)
-            precision_AA = np.mean(list(class_precision.values()))
-
-            # 计算 Cohen's Kappa
-            # 混淆矩阵
-            confusion_matrix = np.zeros((len(unique_classes), len(unique_classes)), dtype=int)
-            class_to_index = {cls: idx for idx, cls in enumerate(unique_classes)}
-
-            for i in range(len(test_label)):
-                actual_idx = class_to_index[test_label[i]]
-                predicted_idx = class_to_index[updated_test_label[i]]
-                confusion_matrix[actual_idx, predicted_idx] += 1
-
-            total_samples = np.sum(confusion_matrix)
-            P_o = np.trace(confusion_matrix) / total_samples  # 观测一致性
-            P_e = np.sum(
-                (np.sum(confusion_matrix, axis=1) * np.sum(confusion_matrix, axis=0)) / total_samples ** 2
-            )  # 随机一致性
-            precision_Kappa = (P_o - P_e) / (1 - P_e) if P_e != 1 else 1.0  # 防止分母为 0
-
-            # 返回总精度和每类精度，及更新后的标签矩阵
-            precision = {
-                'total_precision': precision_OA,
-                'class_precision': class_precision,
-                'average_precision': precision_AA,
-                'kappa': precision_Kappa
-            }
-            return precision, label_matrix
+    #     '''add noise(0,0.5)零均值高斯噪声    随机生成胡椒和盐噪声的比例(0,0.3)'''
+    #     image = image.astype(float)
+    #     for band in range(image.shape[2]):
+    #         image[:, :, band] = (image[:, :, band] - np.min(image[:, :, band])) / (
+    #                     np.max(image[:, :, band]) - np.min(image[:, :, band]))
+    #     np.random.seed(42)
+    #     noisy_image = np.copy(image).astype(np.float64)
+    #     selected_bands = np.random.choice(image.shape[2], size=30, replace=False)
+    #     for i in selected_bands:
+    #         variance = np.random.uniform(0, 0.5)
+    #         noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
+    #         noisy_image[..., i] += noise
+    #         # 随机生成胡椒和盐噪声的比例(0,0.3)
+    #         salt = np.random.rand(*image[..., i].shape) < 0.05  # 盐噪声（值为255）
+    #         pepper = np.random.rand(*image[..., i].shape) < 0.05  # 胡椒噪声（值为0）
+    #         noisy_image[salt, i] = np.max(image[..., i])  # 设置盐噪声为max
+    #         noisy_image[pepper, i] = np.min(image[..., i])  # 设置胡椒噪声为min
+    #     image = noisy_image
 
 
-        acc,tup = nn_unique(X_train_reduced, train_label_list, X_test_reduced, test_label_list, random_idx, label)
-        # view2 = spy.imshow(classes=tup, title="acc-gt")
-        # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/longkou/lambda=1,1,0 no_graph/P*X.jpg')
+    #     # random_idx = np.load('/data/LOH/TSPLL_label/random_idx/random_idx.npy')
+    #     random_idx_dict = np.load('/data/LOH/TSPLL_label/random_idx/random_idx_longkou_0.2%.npy', allow_pickle=True).item()
+    #     random_idx = []
+    #     for class_label, indices in random_idx_dict.items():
+    #         random_idx.extend(indices['train_indices'])
 
-        acc1,tup1 = nn_unique(X_train_reduced1, train_label_list, X_test_reduced, test_label_list, random_idx, label)
-        # view3 = spy.imshow(classes=tup1, title="acc1-gt")
-        # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/longkou/lambda=1,1,0 no_graph/P*L.jpg')
+    #     PATCH_SIZE = 9
+    #     x_train, train_label, x_test, test_label ,train_label_list, test_label_list= train_test_tensor_fold(PATCH_SIZE,random_idx, image, label)
+    #     ours = TRPCA()
 
-        accQ,tupQ = nn_unique(X_train_reduced_Q, train_label_list, X_test_reduced_Q, test_label_list, random_idx, label)
-        # view4 = spy.imshow(classes=tupQ, title="accQ-gt")
-        # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/longkou/lambda=1,1,0 no_graph/Q*X.jpg')
+    #     '''计算临近点'''
+    #     # x_train_W, _, _, _ = train_test_tensor_half(PATCH_SIZE,random_idx, image, label)
+    #     # l = len(x_train_W)
+    #     # ci = []
+    #     # b = x_train_W[0].shape[2]
+    #     # for i in range(l):
+    #     #     c_matrix = torch.zeros((b, b))
+    #     #     xt = x_train_W[i]
+    #     #     ui = torch.mean(xt, dim=(0, 1), keepdim=True)
+    #     #     ui1 = ui.reshape(b, -1)
+    #     #     for m in range(9):
+    #     #         for n in range(9):
+    #     #             xt1 = xt[m, n, :].reshape(b, -1)
+    #     #             c_matrix = c_matrix + torch.matmul(xt1 - ui1, (xt1 - ui1).T)
+    #     #     c_matrix = c_matrix / 80
+    #     #     ci.append(c_matrix)
+    #     # t = 1000
+    #     # k_near = 10
+    #     # w, d = dist_EMD(x_train_W, ci, k_near, t)
+    #     # # np.save('w-1000-indian', w)
+    #     # # np.save('d-1000-indian', d)
+    #     # X_train_fft_list = []
+    #     # for i in range(x_train.shape[1]):
+    #     #     x = x_train[:, i, :].reshape(b, 1, 81)
+    #     #     x =ours.block_diagonal_fft(x)
+    #     #     X_train_fft_list.append(x)
 
-        accQ1,tupQ1 = nn_unique(X_train_reduced_Q1, train_label_list, X_test_reduced_Q, test_label_list, random_idx, label)
-        # view5 = spy.imshow(classes=tupQ1, title="accQ1-gt")
-        # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/longkou/lambda=1,1,0 no_graph/Q*L.jpg')
-        # plt.pause(60)
+    #     # left ,right= ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
+    #     # left = torch.from_numpy(left)
+    #     # right = torch.from_numpy(right)
 
-        # print acc
-        with open('/data/LOH/TSPLL_label/Classification maps/noise/longkou/result.txt', 'a', encoding='utf-8') as file:
-            sys.stdout = file
-            print(lunshu)
-            print(f"P*X Total Precision: {acc['total_precision']* 100:.4f}")
-            print(f"P*X average_precision: {acc['average_precision'] * 100:.4f}")
-            print(f"P*X kappa: {acc['kappa'] * 100:.4f}")
-            for cls, precision in acc['class_precision'].items():
-                print(f"Class {cls} Precision: {precision * 100:.4f}")
+    #     #普通欧式
+    #     N_train = x_train.shape[1]
+    #     b = x_train.shape[0]  # 获取波段数，后面 reshape 要用
+    #     x_flat = x_train.permute(1, 0, 2).reshape(N_train, -1).numpy()
+    #     # 2. 计算欧氏距离矩阵
+    #     from scipy.spatial.distance import pdist, squareform
+    #     # 计算两两之间的欧氏距离
+    #     dist_mat = squareform(pdist(x_flat, metric='euclidean'))
+    #     # 3. 构建权重矩阵 W (使用高斯核函数)
+    #     # sigma 使用距离的平均值自适应
+    #     sigma = np.mean(dist_mat)
+    #     w = np.exp(-dist_mat**2 / (2 * sigma**2))
+    #     np.fill_diagonal(w, 0)  # 对角线置0（自己和自己无连接）
 
-            print(f"P*L Total Precision: {acc1['total_precision']* 100:.4f}")
-            print(f"P*L average_precision: {acc1['average_precision'] * 100:.4f}")
-            print(f"P*L kappa: {acc1['kappa'] * 100:.4f}")
-            for cls, precision in acc1['class_precision'].items():
-                print(f"Class {cls} Precision: {precision * 100:.4f}")
+    #     # 4. KNN 稀疏化 (保留 K 个权重最大的邻居)
+    #     k_near = 10
+    #     for i in range(N_train):
+    #         # argsort 从小到大排，取最后 k 个即为最大的权重
+    #         topk_indices = np.argsort(w[i])[-k_near:]
+    #         # 创建掩码，非 Top-K 的位置置为 0
+    #         mask = np.zeros_like(w[i], dtype=bool)
+    #         mask[topk_indices] = True
+    #         w[i] = w[i] * mask
 
-            print(f"Q*X Total Precision: {accQ['total_precision'] * 100:.4f}")
-            print(f"Q*X average_precision: {accQ['average_precision'] * 100:.4f}")
-            print(f"Q*X kappa: {accQ['kappa'] * 100:.4f}")
-            for cls, precision in accQ['class_precision'].items():
-                print(f"Class {cls} Precision: {precision * 100:.4f}")
+    #     # 保证图是对称的
+    #     w = (w + w.T) / 2
 
-            print(f"Q*L Total Precision: {accQ1['total_precision'] * 100:.4f}")
-            print(f"Q*L average_precision: {accQ1['average_precision'] * 100:.4f}")
-            print(f"Q*L kappa: {accQ1['kappa'] * 100:.4f}")
-            for cls, precision in accQ1['class_precision'].items():
-                print(f"Class {cls} Precision: {precision * 100:.4f}")
-            sys.stdout = sys.__stdout__
+    #     # 5. 计算度矩阵 D (对角阵)
+    #     # D_ii = sum(W_ij)
+    #     d = np.diag(np.sum(w, axis=1))
+
+    #     # --- 以下保持您原本的后续逻辑不变 ---
+    #     X_train_fft_list = []
+    #     for i in range(x_train.shape[1]):
+    #         x = x_train[:, i, :].reshape(b, 1, 81)
+    #         x = ours.block_diagonal_fft(x)
+    #         X_train_fft_list.append(x)
+    #     left ,right= ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
+    #     left = torch.from_numpy(left)
+    #     right = torch.from_numpy(right)
+
+
+    #     M, L, E, P, W, G, Q= ours.ADMM(left,right,x_train,train_label)
+    #     X_train_reduced = ours.T_product(P, x_train)
+    #     X_train_reduced1 = ours.T_product(P, L)
+    #     X_train_reduced_Q = ours.T_product(Q, x_train)
+    #     X_train_reduced_Q1 = ours.T_product(Q, L)
+    #     X_test_reduced = ours.T_product(P, x_test)
+    #     X_test_reduced_Q = ours.T_product(Q, x_test)
+
+    #     def nn_unique(x_train, train_label, x_test, test_label, random, label):
+    #         computedClass = []
+    #         D = np.zeros((x_test.shape[1], x_train.shape[1]))
+    #         # 计算距离矩阵
+    #         for i in range(x_test.shape[1]):
+    #             current_block = x_test[:, i, :]
+    #             for j in range(x_train.shape[1]):
+    #                 neighbor_block = x_train[:, j, :]
+    #                 w = current_block - neighbor_block
+    #                 d = torch.linalg.norm(w)
+    #                 D[i, j] = d
+
+    #         # 获取每个测试样本的最小距离邻居
+    #         id = np.argsort(D, axis=1)
+    #         computedClass.append(np.array(train_label)[id[:, 0]])
+
+    #         # 将预测类别加入到test_label中（更新标签）
+    #         updated_test_label = np.copy(test_label)  # 复制原始标签以保留原始信息
+    #         updated_test_label[:] = computedClass[0]  # 将计算得到的预测标签填入更新后的标签中
+
+    #         rows, cols = np.nonzero(label != 0)
+    #         coordinates = np.column_stack((rows, cols))
+
+    #         label_matrix = np.copy(label)
+    #         idx_test = np.setdiff1d(range(len(coordinates)), random)
+
+    #         # Process testing patches 可视化分类结果
+    #         for test_idx, coord in enumerate(idx_test):
+    #             i, j = coordinates[coord]
+    #             label_matrix[i, j] = updated_test_label[test_idx]
+
+    #         # 计算总精度 OA
+    #         total_correct = np.sum(updated_test_label == test_label)
+    #         precision_OA = total_correct / x_test.shape[1]
+
+    #         # 计算每个类别的精度
+    #         unique_classes = np.unique(train_label)
+    #         class_precision = {}
+
+    #         for cls in unique_classes:
+    #             # 获取该类别在测试集中的索引
+    #             test_cls_indices = np.where(test_label == cls)[0]
+    #             if len(test_cls_indices) == 0:
+    #                 continue  # 如果没有该类别的测试样本，跳过
+
+    #             correct_count = 0
+    #             for idx in test_cls_indices:
+    #                 # 比较预测标签和真实标签
+    #                 if updated_test_label[idx] == cls:
+    #                     correct_count += 1
+
+    #             # 计算该类别的精度
+    #             precision = correct_count / len(test_cls_indices)
+    #             class_precision[cls] = precision
+
+    #         # 计算平均精度 (AA)
+    #         precision_AA = np.mean(list(class_precision.values()))
+
+    #         # 计算 Cohen's Kappa
+    #         # 混淆矩阵
+    #         confusion_matrix = np.zeros((len(unique_classes), len(unique_classes)), dtype=int)
+    #         class_to_index = {cls: idx for idx, cls in enumerate(unique_classes)}
+
+    #         for i in range(len(test_label)):
+    #             actual_idx = class_to_index[test_label[i]]
+    #             predicted_idx = class_to_index[updated_test_label[i]]
+    #             confusion_matrix[actual_idx, predicted_idx] += 1
+
+    #         total_samples = np.sum(confusion_matrix)
+    #         P_o = np.trace(confusion_matrix) / total_samples  # 观测一致性
+    #         P_e = np.sum(
+    #             (np.sum(confusion_matrix, axis=1) * np.sum(confusion_matrix, axis=0)) / total_samples ** 2
+    #         )  # 随机一致性
+    #         precision_Kappa = (P_o - P_e) / (1 - P_e) if P_e != 1 else 1.0  # 防止分母为 0
+
+    #         # 返回总精度和每类精度，及更新后的标签矩阵
+    #         precision = {
+    #             'total_precision': precision_OA,
+    #             'class_precision': class_precision,
+    #             'average_precision': precision_AA,
+    #             'kappa': precision_Kappa
+    #         }
+    #         return precision, label_matrix
+
+
+    #     acc,tup = nn_unique(X_train_reduced, train_label_list, X_test_reduced, test_label_list, random_idx, label)
+    #     # view2 = spy.imshow(classes=tup, title="acc-gt")
+    #     # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/longkou/lambda=1,1,0 no_graph/P*X.jpg')
+
+    #     acc1,tup1 = nn_unique(X_train_reduced1, train_label_list, X_test_reduced, test_label_list, random_idx, label)
+    #     # view3 = spy.imshow(classes=tup1, title="acc1-gt")
+    #     # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/longkou/lambda=1,1,0 no_graph/P*L.jpg')
+
+    #     accQ,tupQ = nn_unique(X_train_reduced_Q, train_label_list, X_test_reduced_Q, test_label_list, random_idx, label)
+    #     # view4 = spy.imshow(classes=tupQ, title="accQ-gt")
+    #     # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/longkou/lambda=1,1,0 no_graph/Q*X.jpg')
+
+    #     accQ1,tupQ1 = nn_unique(X_train_reduced_Q1, train_label_list, X_test_reduced_Q, test_label_list, random_idx, label)
+    #     # view5 = spy.imshow(classes=tupQ1, title="accQ1-gt")
+    #     # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/longkou/lambda=1,1,0 no_graph/Q*L.jpg')
+    #     # plt.pause(60)
+
+    #     # print acc
+    #     with open('/data/LOH/TSPLL_label/Classification maps/noise/longkou/result.txt', 'a', encoding='utf-8') as file:
+    #         sys.stdout = file
+    #         print(lunshu)
+    #         print(f"P*X Total Precision: {acc['total_precision']* 100:.4f}")
+    #         print(f"P*X average_precision: {acc['average_precision'] * 100:.4f}")
+    #         print(f"P*X kappa: {acc['kappa'] * 100:.4f}")
+    #         for cls, precision in acc['class_precision'].items():
+    #             print(f"Class {cls} Precision: {precision * 100:.4f}")
+
+    #         print(f"P*L Total Precision: {acc1['total_precision']* 100:.4f}")
+    #         print(f"P*L average_precision: {acc1['average_precision'] * 100:.4f}")
+    #         print(f"P*L kappa: {acc1['kappa'] * 100:.4f}")
+    #         for cls, precision in acc1['class_precision'].items():
+    #             print(f"Class {cls} Precision: {precision * 100:.4f}")
+
+    #         print(f"Q*X Total Precision: {accQ['total_precision'] * 100:.4f}")
+    #         print(f"Q*X average_precision: {accQ['average_precision'] * 100:.4f}")
+    #         print(f"Q*X kappa: {accQ['kappa'] * 100:.4f}")
+    #         for cls, precision in accQ['class_precision'].items():
+    #             print(f"Class {cls} Precision: {precision * 100:.4f}")
+
+    #         print(f"Q*L Total Precision: {accQ1['total_precision'] * 100:.4f}")
+    #         print(f"Q*L average_precision: {accQ1['average_precision'] * 100:.4f}")
+    #         print(f"Q*L kappa: {accQ1['kappa'] * 100:.4f}")
+    #         for cls, precision in accQ1['class_precision'].items():
+    #             print(f"Class {cls} Precision: {precision * 100:.4f}")
+    #         sys.stdout = sys.__stdout__
 
 
 
@@ -726,230 +769,230 @@ if __name__ =='__main__':
     #             print(f"Class {cls} Precision: {precision * 100:.4f}")
     #         sys.stdout = sys.__stdout__
 
-    # for lunshu in range(1, 2):
-    #     image = loadmat('/data/LOH/TSPLL_label/dataset/Indian_pines/Indian_pines.mat')['indian_pines_corrected']
-    #     label = loadmat('/data/LOH/TSPLL_label/dataset/Indian_pines/Indian_pines_gt.mat')['indian_pines_gt']
-    #     # view1 = spy.imshow(classes=label, title="gt")
-    #     # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/gt.jpg')
-    #     '''PCA'''
-    #     rows, cols = np.nonzero(label != 0)
-    #     coordinates = np.column_stack((rows, cols))
-    #     # fea = loadmat('/data/LOH/TSPLL_label/dataset/Salinas/Salinas.mat')['fea']
-    #     fea = np.zeros((coordinates.shape[0], image.shape[2]))
-    #     for i, j in enumerate(coordinates):
-    #         fea[i, :] = image[j[0], j[1], :]
-    #     # 10249*200
-    #     pca = PCA(n_components=80)  # 降维到100
-    #     pca.fit(fea)
-    #     fea_reduced = pca.transform(fea)
-    #     x = np.zeros((label.shape[0], label.shape[1], 80))
-    #     for i in range(fea.shape[0]):
-    #         a = coordinates[i][0]
-    #         b = coordinates[i][1]
-    #         x[a][b][:] = fea_reduced[i][:]
-    #     image = x.astype(np.float32)
-    #
-    #     '''add noise(0,0.5)零均值高斯噪声    随机生成胡椒和盐噪声的比例(0,0.3)'''
-    #     image = image.astype(float)
-    #     for band in range(image.shape[2]):
-    #         image[:, :, band] = (image[:, :, band] - np.min(image[:, :, band])) / (
-    #                 np.max(image[:, :, band]) - np.min(image[:, :, band]))
-    #     np.random.seed(42)
-    #     noisy_image = np.copy(image).astype(np.float64)
-    #     selected_bands = np.random.choice(image.shape[2], size=60, replace=False)
-    #     for i in selected_bands:
-    #         variance = np.random.uniform(0, 0.5)
-    #         noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
-    #         noisy_image[..., i] += noise
-    #         # 随机生成胡椒和盐噪声的比例(0,0.3)
-    #         salt = np.random.rand(*image[..., i].shape) < 0.05  # 盐噪声（值为255）
-    #         pepper = np.random.rand(*image[..., i].shape) < 0.05  # 胡椒噪声（值为0）
-    #         noisy_image[salt, i] = np.max(image[..., i])  # 设置盐噪声为max
-    #         noisy_image[pepper, i] = np.min(image[..., i])  # 设置胡椒噪声为min
-    #     image = noisy_image
-    #
-    #     random_idx = np.load('/data/LOH/TSPLL_label/random_idx/random_idx.npy')
-    #     PATCH_SIZE = 9
-    #     x_train, train_label, x_test, test_label, train_label_list, test_label_list = train_test_tensor_fold(PATCH_SIZE,random_idx, image, label)
-    #     ours = TRPCA()
-    #
-    #     '''计算临近点'''
-    #     x_train_W, _, _, _ = train_test_tensor_half(PATCH_SIZE,random_idx, image, label)
-    #     l = len(x_train_W)
-    #     ci = []
-    #     b = x_train_W[0].shape[2]
-    #     for i in range(l):
-    #         c_matrix = torch.zeros((b, b))
-    #         xt = x_train_W[i]
-    #         ui = torch.mean(xt, dim=(0, 1), keepdim=True)
-    #         ui1 = ui.reshape(b, -1)
-    #         for m in range(9):
-    #             for n in range(9):
-    #                 xt1 = xt[m, n, :].reshape(b, -1)
-    #                 c_matrix = c_matrix + torch.matmul(xt1 - ui1, (xt1 - ui1).T)
-    #         c_matrix = c_matrix / 80
-    #         ci.append(c_matrix)
-    #     t = 1000
-    #     k_near = 10
-    #     w, d = dist_EMD(x_train_W, ci, k_near, t)
-    #     # np.save('w-1000-indian', w)
-    #     # np.save('d-1000-indian', d)
-    #     X_train_fft_list = []
-    #     for i in range(x_train.shape[1]):
-    #         x = x_train[:, i, :].reshape(b, 1, 81)
-    #         x = ours.block_diagonal_fft(x)
-    #         X_train_fft_list.append(x)
-    #
-    #     left, right = ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
-    #     # np.save('left-1000-indian',left)
-    #     # np.save('right-1000-indian',right)
-    #     left = torch.from_numpy(left)
-    #     right = torch.from_numpy(right)
-    #
-    #     M, L, E, P, W, G, Q = ours.ADMM(left, right, x_train, train_label)
-    #     X_train_reduced = ours.T_product(P, x_train)
-    #     X_train_reduced1 = ours.T_product(P, L)
-    #     X_train_reduced_Q = ours.T_product(Q, x_train)
-    #     X_train_reduced_Q1 = ours.T_product(Q, L)
-    #     X_test_reduced = ours.T_product(P, x_test)
-    #     X_test_reduced_Q = ours.T_product(Q, x_test)
-    #
-    #
-    #     def nn_unique(x_train, train_label, x_test, test_label, random, label):
-    #         computedClass = []
-    #         D = np.zeros((x_test.shape[1], x_train.shape[1]))
-    #         # 计算距离矩阵
-    #         for i in range(x_test.shape[1]):
-    #             current_block = x_test[:, i, :]
-    #             for j in range(x_train.shape[1]):
-    #                 neighbor_block = x_train[:, j, :]
-    #                 w = current_block - neighbor_block
-    #                 d = torch.linalg.norm(w)
-    #                 D[i, j] = d
-    #
-    #         # 获取每个测试样本的最小距离邻居
-    #         id = np.argsort(D, axis=1)
-    #         computedClass.append(np.array(train_label)[id[:, 0]])
-    #
-    #         # 将预测类别加入到test_label中（更新标签）
-    #         updated_test_label = np.copy(test_label)  # 复制原始标签以保留原始信息
-    #         updated_test_label[:] = computedClass[0]  # 将计算得到的预测标签填入更新后的标签中
-    #
-    #         rows, cols = np.nonzero(label != 0)
-    #         coordinates = np.column_stack((rows, cols))
-    #
-    #         label_matrix = np.copy(label)
-    #         idx_test = np.setdiff1d(range(len(coordinates)), random)
-    #
-    #         # Process testing patches 可视化分类结果
-    #         for test_idx, coord in enumerate(idx_test):
-    #             i, j = coordinates[coord]
-    #             label_matrix[i, j] = updated_test_label[test_idx]
-    #
-    #         # 计算总精度 OA
-    #         total_correct = np.sum(updated_test_label == test_label)
-    #         precision_OA = total_correct / x_test.shape[1]
-    #
-    #         # 计算每个类别的精度
-    #         unique_classes = np.unique(train_label)
-    #         class_precision = {}
-    #
-    #         for cls in unique_classes:
-    #             # 获取该类别在测试集中的索引
-    #             test_cls_indices = np.where(test_label == cls)[0]
-    #             if len(test_cls_indices) == 0:
-    #                 continue  # 如果没有该类别的测试样本，跳过
-    #
-    #             correct_count = 0
-    #             for idx in test_cls_indices:
-    #                 # 比较预测标签和真实标签
-    #                 if updated_test_label[idx] == cls:
-    #                     correct_count += 1
-    #
-    #             # 计算该类别的精度
-    #             precision = correct_count / len(test_cls_indices)
-    #             class_precision[cls] = precision
-    #
-    #         # 计算平均精度 (AA)
-    #         precision_AA = np.mean(list(class_precision.values()))
-    #
-    #         # 计算 Cohen's Kappa
-    #         # 混淆矩阵
-    #         confusion_matrix = np.zeros((len(unique_classes), len(unique_classes)), dtype=int)
-    #         class_to_index = {cls: idx for idx, cls in enumerate(unique_classes)}
-    #
-    #         for i in range(len(test_label)):
-    #             actual_idx = class_to_index[test_label[i]]
-    #             predicted_idx = class_to_index[updated_test_label[i]]
-    #             confusion_matrix[actual_idx, predicted_idx] += 1
-    #
-    #         total_samples = np.sum(confusion_matrix)
-    #         P_o = np.trace(confusion_matrix) / total_samples  # 观测一致性
-    #         P_e = np.sum(
-    #             (np.sum(confusion_matrix, axis=1) * np.sum(confusion_matrix, axis=0)) / total_samples ** 2
-    #         )  # 随机一致性
-    #         precision_Kappa = (P_o - P_e) / (1 - P_e) if P_e != 1 else 1.0  # 防止分母为 0
-    #
-    #         # 返回总精度和每类精度，及更新后的标签矩阵
-    #         precision = {
-    #             'total_precision': precision_OA,
-    #             'class_precision': class_precision,
-    #             'average_precision': precision_AA,
-    #             'kappa': precision_Kappa
-    #         }
-    #         return precision, label_matrix
-    #
-    #
-    #     acc, tup = nn_unique(X_train_reduced, train_label_list, X_test_reduced, test_label_list, random_idx, label)
-    #     # view2 = spy.imshow(classes=tup, title="acc-gt")
-    #     # plt.savefig(
-    #     #     '/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/P*X.jpg')
-    #
-    #     acc1, tup1 = nn_unique(X_train_reduced1, train_label_list, X_test_reduced, test_label_list, random_idx,label)
-    #     # view3 = spy.imshow(classes=tup1, title="acc1-gt")
-    #     # plt.savefig(
-    #     #     '/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/P*L.jpg')
-    #
-    #     accQ, tupQ = nn_unique(X_train_reduced_Q, train_label_list, X_test_reduced_Q, test_label_list, random_idx,
-    #                            label)
-    #     # view4 = spy.imshow(classes=tupQ, title="accQ-gt")
-    #     # plt.savefig(
-    #     #     '/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/Q*X.jpg')
-    #
-    #     accQ1, tupQ1 = nn_unique(X_train_reduced_Q1, train_label_list, X_test_reduced_Q, test_label_list,
-    #                              random_idx, label)
-    #     # view5 = spy.imshow(classes=tupQ1, title="accQ1-gt")
-    #     # plt.savefig(
-    #     #     '/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/Q*L.jpg')
-    #     # plt.pause(60)
-    #
-    #     # print acc
-    #     with open(
-    #             '/data/LOH/TSPLL_label/Classification maps/noise/indian_pines/result.txt',
-    #             'a', encoding='utf-8') as file:
-    #         sys.stdout = file
-    #         print(lunshu)
-    #         print(f"P*X Total Precision: {acc['total_precision'] * 100:.4f}")
-    #         print(f"P*X average_precision: {acc['average_precision'] * 100:.4f}")
-    #         print(f"P*X kappa: {acc['kappa'] * 100:.4f}")
-    #         for cls, precision in acc['class_precision'].items():
-    #             print(f"Class {cls} Precision: {precision * 100:.4f}")
-    #
-    #         print(f"P*L Total Precision: {acc1['total_precision'] * 100:.4f}")
-    #         print(f"P*L average_precision: {acc1['average_precision'] * 100:.4f}")
-    #         print(f"P*L kappa: {acc1['kappa'] * 100:.4f}")
-    #         for cls, precision in acc1['class_precision'].items():
-    #             print(f"Class {cls} Precision: {precision * 100:.4f}")
-    #
-    #         print(f"Q*X Total Precision: {accQ['total_precision'] * 100:.4f}")
-    #         print(f"Q*X average_precision: {accQ['average_precision'] * 100:.4f}")
-    #         print(f"Q*X kappa: {accQ['kappa'] * 100:.4f}")
-    #         for cls, precision in accQ['class_precision'].items():
-    #             print(f"Class {cls} Precision: {precision * 100:.4f}")
-    #
-    #         print(f"Q*L Total Precision: {accQ1['total_precision'] * 100:.4f}")
-    #         print(f"Q*L average_precision: {accQ1['average_precision'] * 100:.4f}")
-    #         print(f"Q*L kappa: {accQ1['kappa'] * 100:.4f}")
-    #         for cls, precision in accQ1['class_precision'].items():
-    #             print(f"Class {cls} Precision: {precision * 100:.4f}")
-    #         sys.stdout = sys.__stdout__
+    for lunshu in range(1, 2):
+        image = loadmat('/data/LOH/TSPLL_label/dataset/Indian_pines/Indian_pines.mat')['indian_pines_corrected']
+        label = loadmat('/data/LOH/TSPLL_label/dataset/Indian_pines/Indian_pines_gt.mat')['indian_pines_gt']
+        # view1 = spy.imshow(classes=label, title="gt")
+        # plt.savefig('/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/gt.jpg')
+        '''PCA'''
+        rows, cols = np.nonzero(label != 0)
+        coordinates = np.column_stack((rows, cols))
+        # fea = loadmat('/data/LOH/TSPLL_label/dataset/Salinas/Salinas.mat')['fea']
+        fea = np.zeros((coordinates.shape[0], image.shape[2]))
+        for i, j in enumerate(coordinates):
+            fea[i, :] = image[j[0], j[1], :]
+        # 10249*200
+        pca = PCA(n_components=80)  # 降维到100
+        pca.fit(fea)
+        fea_reduced = pca.transform(fea)
+        x = np.zeros((label.shape[0], label.shape[1], 80))
+        for i in range(fea.shape[0]):
+            a = coordinates[i][0]
+            b = coordinates[i][1]
+            x[a][b][:] = fea_reduced[i][:]
+        image = x.astype(np.float32)
+    
+        '''add noise(0,0.5)零均值高斯噪声    随机生成胡椒和盐噪声的比例(0,0.3)'''
+        image = image.astype(float)
+        for band in range(image.shape[2]):
+            image[:, :, band] = (image[:, :, band] - np.min(image[:, :, band])) / (
+                    np.max(image[:, :, band]) - np.min(image[:, :, band]))
+        np.random.seed(42)
+        noisy_image = np.copy(image).astype(np.float64)
+        selected_bands = np.random.choice(image.shape[2], size=60, replace=False)
+        for i in selected_bands:
+            variance = np.random.uniform(0, 0.5)
+            noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
+            noisy_image[..., i] += noise
+            # 随机生成胡椒和盐噪声的比例(0,0.3)
+            salt = np.random.rand(*image[..., i].shape) < 0.05  # 盐噪声（值为255）
+            pepper = np.random.rand(*image[..., i].shape) < 0.05  # 胡椒噪声（值为0）
+            noisy_image[salt, i] = np.max(image[..., i])  # 设置盐噪声为max
+            noisy_image[pepper, i] = np.min(image[..., i])  # 设置胡椒噪声为min
+        image = noisy_image
+    
+        random_idx = np.load('/data/LOH/TSPLL_label/random_idx/random_idx.npy')
+        PATCH_SIZE = 9
+        x_train, train_label, x_test, test_label, train_label_list, test_label_list = train_test_tensor_fold(PATCH_SIZE,random_idx, image, label)
+        ours = TRPCA()
+    
+        '''计算临近点'''
+        x_train_W, _, _, _ = train_test_tensor_half(PATCH_SIZE,random_idx, image, label)
+        l = len(x_train_W)
+        ci = []
+        b = x_train_W[0].shape[2]
+        for i in range(l):
+            c_matrix = torch.zeros((b, b))
+            xt = x_train_W[i]
+            ui = torch.mean(xt, dim=(0, 1), keepdim=True)
+            ui1 = ui.reshape(b, -1)
+            for m in range(9):
+                for n in range(9):
+                    xt1 = xt[m, n, :].reshape(b, -1)
+                    c_matrix = c_matrix + torch.matmul(xt1 - ui1, (xt1 - ui1).T)
+            c_matrix = c_matrix / 80
+            ci.append(c_matrix)
+        t = 1000
+        k_near = 10
+        w, d = dist_EMD(x_train_W, ci, k_near, t)
+        # np.save('w-1000-indian', w)
+        # np.save('d-1000-indian', d)
+        X_train_fft_list = []
+        for i in range(x_train.shape[1]):
+            x = x_train[:, i, :].reshape(b, 1, 81)
+            x = ours.block_diagonal_fft(x)
+            X_train_fft_list.append(x)
+    
+        left, right = ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
+        # np.save('left-1000-indian',left)
+        # np.save('right-1000-indian',right)
+        left = torch.from_numpy(left)
+        right = torch.from_numpy(right)
+    
+        M, L, E, P, W, G, Q = ours.ADMM(left, right, x_train, train_label)
+        X_train_reduced = ours.T_product(P, x_train)
+        X_train_reduced1 = ours.T_product(P, L)
+        X_train_reduced_Q = ours.T_product(Q, x_train)
+        X_train_reduced_Q1 = ours.T_product(Q, L)
+        X_test_reduced = ours.T_product(P, x_test)
+        X_test_reduced_Q = ours.T_product(Q, x_test)
+    
+    
+        def nn_unique(x_train, train_label, x_test, test_label, random, label):
+            computedClass = []
+            D = np.zeros((x_test.shape[1], x_train.shape[1]))
+            # 计算距离矩阵
+            for i in range(x_test.shape[1]):
+                current_block = x_test[:, i, :]
+                for j in range(x_train.shape[1]):
+                    neighbor_block = x_train[:, j, :]
+                    w = current_block - neighbor_block
+                    d = torch.linalg.norm(w)
+                    D[i, j] = d
+    
+            # 获取每个测试样本的最小距离邻居
+            id = np.argsort(D, axis=1)
+            computedClass.append(np.array(train_label)[id[:, 0]])
+    
+            # 将预测类别加入到test_label中（更新标签）
+            updated_test_label = np.copy(test_label)  # 复制原始标签以保留原始信息
+            updated_test_label[:] = computedClass[0]  # 将计算得到的预测标签填入更新后的标签中
+    
+            rows, cols = np.nonzero(label != 0)
+            coordinates = np.column_stack((rows, cols))
+    
+            label_matrix = np.copy(label)
+            idx_test = np.setdiff1d(range(len(coordinates)), random)
+    
+            # Process testing patches 可视化分类结果
+            for test_idx, coord in enumerate(idx_test):
+                i, j = coordinates[coord]
+                label_matrix[i, j] = updated_test_label[test_idx]
+    
+            # 计算总精度 OA
+            total_correct = np.sum(updated_test_label == test_label)
+            precision_OA = total_correct / x_test.shape[1]
+    
+            # 计算每个类别的精度
+            unique_classes = np.unique(train_label)
+            class_precision = {}
+    
+            for cls in unique_classes:
+                # 获取该类别在测试集中的索引
+                test_cls_indices = np.where(test_label == cls)[0]
+                if len(test_cls_indices) == 0:
+                    continue  # 如果没有该类别的测试样本，跳过
+    
+                correct_count = 0
+                for idx in test_cls_indices:
+                    # 比较预测标签和真实标签
+                    if updated_test_label[idx] == cls:
+                        correct_count += 1
+    
+                # 计算该类别的精度
+                precision = correct_count / len(test_cls_indices)
+                class_precision[cls] = precision
+    
+            # 计算平均精度 (AA)
+            precision_AA = np.mean(list(class_precision.values()))
+    
+            # 计算 Cohen's Kappa
+            # 混淆矩阵
+            confusion_matrix = np.zeros((len(unique_classes), len(unique_classes)), dtype=int)
+            class_to_index = {cls: idx for idx, cls in enumerate(unique_classes)}
+    
+            for i in range(len(test_label)):
+                actual_idx = class_to_index[test_label[i]]
+                predicted_idx = class_to_index[updated_test_label[i]]
+                confusion_matrix[actual_idx, predicted_idx] += 1
+    
+            total_samples = np.sum(confusion_matrix)
+            P_o = np.trace(confusion_matrix) / total_samples  # 观测一致性
+            P_e = np.sum(
+                (np.sum(confusion_matrix, axis=1) * np.sum(confusion_matrix, axis=0)) / total_samples ** 2
+            )  # 随机一致性
+            precision_Kappa = (P_o - P_e) / (1 - P_e) if P_e != 1 else 1.0  # 防止分母为 0
+    
+            # 返回总精度和每类精度，及更新后的标签矩阵
+            precision = {
+                'total_precision': precision_OA,
+                'class_precision': class_precision,
+                'average_precision': precision_AA,
+                'kappa': precision_Kappa
+            }
+            return precision, label_matrix
+    
+    
+        acc, tup = nn_unique(X_train_reduced, train_label_list, X_test_reduced, test_label_list, random_idx, label)
+        # view2 = spy.imshow(classes=tup, title="acc-gt")
+        # plt.savefig(
+        #     '/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/P*X.jpg')
+    
+        acc1, tup1 = nn_unique(X_train_reduced1, train_label_list, X_test_reduced, test_label_list, random_idx,label)
+        # view3 = spy.imshow(classes=tup1, title="acc1-gt")
+        # plt.savefig(
+        #     '/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/P*L.jpg')
+    
+        accQ, tupQ = nn_unique(X_train_reduced_Q, train_label_list, X_test_reduced_Q, test_label_list, random_idx,
+                               label)
+        # view4 = spy.imshow(classes=tupQ, title="accQ-gt")
+        # plt.savefig(
+        #     '/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/Q*X.jpg')
+    
+        accQ1, tupQ1 = nn_unique(X_train_reduced_Q1, train_label_list, X_test_reduced_Q, test_label_list,
+                                 random_idx, label)
+        # view5 = spy.imshow(classes=tupQ1, title="accQ1-gt")
+        # plt.savefig(
+        #     '/data/LOH/TSPLL_label/Classification maps/Ablation Analysis/indian_pines/lambda=1,1,0 no_graph/Q*L.jpg')
+        # plt.pause(60)
+    
+        # print acc
+        with open(
+                '/data/LOH/TSPLL_label/Classification maps/noise/indian_pines/result.txt',
+                'a', encoding='utf-8') as file:
+            sys.stdout = file
+            print(lunshu)
+            print(f"P*X Total Precision: {acc['total_precision'] * 100:.4f}")
+            print(f"P*X average_precision: {acc['average_precision'] * 100:.4f}")
+            print(f"P*X kappa: {acc['kappa'] * 100:.4f}")
+            for cls, precision in acc['class_precision'].items():
+                print(f"Class {cls} Precision: {precision * 100:.4f}")
+    
+            print(f"P*L Total Precision: {acc1['total_precision'] * 100:.4f}")
+            print(f"P*L average_precision: {acc1['average_precision'] * 100:.4f}")
+            print(f"P*L kappa: {acc1['kappa'] * 100:.4f}")
+            for cls, precision in acc1['class_precision'].items():
+                print(f"Class {cls} Precision: {precision * 100:.4f}")
+    
+            print(f"Q*X Total Precision: {accQ['total_precision'] * 100:.4f}")
+            print(f"Q*X average_precision: {accQ['average_precision'] * 100:.4f}")
+            print(f"Q*X kappa: {accQ['kappa'] * 100:.4f}")
+            for cls, precision in accQ['class_precision'].items():
+                print(f"Class {cls} Precision: {precision * 100:.4f}")
+    
+            print(f"Q*L Total Precision: {accQ1['total_precision'] * 100:.4f}")
+            print(f"Q*L average_precision: {accQ1['average_precision'] * 100:.4f}")
+            print(f"Q*L kappa: {accQ1['kappa'] * 100:.4f}")
+            for cls, precision in accQ1['class_precision'].items():
+                print(f"Class {cls} Precision: {precision * 100:.4f}")
+            sys.stdout = sys.__stdout__
