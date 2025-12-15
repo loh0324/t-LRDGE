@@ -142,6 +142,8 @@ class TRPCA:
         W3 = torch.zeros((c, l, n))
         W4 = torch.zeros((r, l, n))
         iters = 0
+        loss = []
+        print("ADMM Optimization Start...")
         while True:
             iters += 1
             # update M
@@ -260,7 +262,19 @@ class TRPCA:
             W3 += mu * (self.T_product(W_new,P_new) - G_new)
             W4 += mu * (P_new - Q_new)
             mu = min(rho * mu, mu_max)
-        
+
+            term1 = self.T_product(P_new, X) - self.T_product(P_new, L_new) - E_new
+            term2 = L_new - M_new
+            term3 = self.T_product(W_new, P_new) - G_new
+            term4 = P_new - Q_new
+
+            res1 = torch.norm(term1).item()
+            res2 = torch.norm(term2).item()
+            res3 = torch.norm(term3).item()
+            res4 = torch.norm(term4).item()
+            total_residual = res1 + res2 + res3 + res4
+            loss.append(total_residual)
+            print(f"Iter {iters}: Total Residual={total_residual:.6f}, mu={mu:.2e}")
             if self.converged(M, L, E, P, W, G, X, M_new, L_new, E_new,P_new,W_new,G_new) or iters >= max_iters:
                 return M_new, L_new, E_new, P_new, W_new,G_new,Q_new
             else:
@@ -793,23 +807,23 @@ if __name__ =='__main__':
         image = x.astype(np.float32)
     
         '''add noise(0,0.5)零均值高斯噪声    随机生成胡椒和盐噪声的比例(0,0.3)'''
-        image = image.astype(float)
-        for band in range(image.shape[2]):
-            image[:, :, band] = (image[:, :, band] - np.min(image[:, :, band])) / (
-                    np.max(image[:, :, band]) - np.min(image[:, :, band]))
-        np.random.seed(42)
-        noisy_image = np.copy(image).astype(np.float64)
-        selected_bands = np.random.choice(image.shape[2], size=60, replace=False)
-        for i in selected_bands:
-            variance = np.random.uniform(0, 0.5)
-            noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
-            noisy_image[..., i] += noise
-            # 随机生成胡椒和盐噪声的比例(0,0.3)
-            salt = np.random.rand(*image[..., i].shape) < 0.05  # 盐噪声（值为255）
-            pepper = np.random.rand(*image[..., i].shape) < 0.05  # 胡椒噪声（值为0）
-            noisy_image[salt, i] = np.max(image[..., i])  # 设置盐噪声为max
-            noisy_image[pepper, i] = np.min(image[..., i])  # 设置胡椒噪声为min
-        image = noisy_image
+        # image = image.astype(float)
+        # for band in range(image.shape[2]):
+        #     image[:, :, band] = (image[:, :, band] - np.min(image[:, :, band])) / (
+        #             np.max(image[:, :, band]) - np.min(image[:, :, band]))
+        # np.random.seed(42)
+        # noisy_image = np.copy(image).astype(np.float64)
+        # selected_bands = np.random.choice(image.shape[2], size=60, replace=False)
+        # for i in selected_bands:
+        #     variance = np.random.uniform(0, 0.5)
+        #     noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
+        #     noisy_image[..., i] += noise
+        #     # 随机生成胡椒和盐噪声的比例(0,0.3)
+        #     salt = np.random.rand(*image[..., i].shape) < 0.05  # 盐噪声（值为255）
+        #     pepper = np.random.rand(*image[..., i].shape) < 0.05  # 胡椒噪声（值为0）
+        #     noisy_image[salt, i] = np.max(image[..., i])  # 设置盐噪声为max
+        #     noisy_image[pepper, i] = np.min(image[..., i])  # 设置胡椒噪声为min
+        # image = noisy_image
     
         random_idx = np.load('/data/LOH/TSPLL_label/random_idx/random_idx.npy')
         PATCH_SIZE = 9
@@ -844,8 +858,8 @@ if __name__ =='__main__':
             X_train_fft_list.append(x)
     
         left, right = ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
-        # np.save('left-1000-indian',left)
-        # np.save('right-1000-indian',right)
+        np.save('left-1000-indian',left)
+        np.save('right-1000-indian',right)
         left = torch.from_numpy(left)
         right = torch.from_numpy(right)
     
@@ -942,7 +956,17 @@ if __name__ =='__main__':
             }
             return precision, label_matrix
     
-    
+        plt.figure(figsize=(8, 6))
+        plt.plot(range(1, len(loss_list) + 1), loss_list, linewidth=2, color='red', marker='o', markersize=3)
+        plt.xlabel('Iterations')
+        plt.ylabel('Total Residual (Constraint Violation)')
+        plt.title('Convergence Analysis of TSPLL (Fold Version)')
+        plt.grid(True)
+        # 保存图片到当前目录
+        plt.savefig('/data/LOH/TSPLL_label/Classification maps/convergence/convergence_TSPLL_residuals.png')
+        plt.show()
+        print("收敛图已保存为 'convergence_TSPLL_residuals.png'")
+
         acc, tup = nn_unique(X_train_reduced, train_label_list, X_test_reduced, test_label_list, random_idx, label)
         # view2 = spy.imshow(classes=tup, title="acc-gt")
         # plt.savefig(
@@ -968,7 +992,7 @@ if __name__ =='__main__':
     
         # print acc
         with open(
-                '/data/LOH/TSPLL_label/Classification maps/noise/indian_pines/result.txt',
+                '/data/LOH/TSPLL_label/Classification maps/convergence/result.txt',
                 'a', encoding='utf-8') as file:
             sys.stdout = file
             print(lunshu)
