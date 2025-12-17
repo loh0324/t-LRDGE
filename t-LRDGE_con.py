@@ -153,7 +153,7 @@ class TRPCA:
         c = Y.shape[0]
         r = 30 
         rho = 1.1
-        mu = 1e-2
+        mu = 0.01
         mu_max = 1e6
         max_iters = 100
         lamb = 1   # lambda1: for E
@@ -262,7 +262,7 @@ class TRPCA:
             Q_curr = torch.fft.fft(Q, dim=2).permute(2,0,1)
             
             q_lr = 0.01
-            q_iters = 5
+            q_iters = 50 # 建议稍微增加迭代次数，旧代码如果是闭式解或多次迭代会更稳
             lambda_val = 1.0
             
             for _ in range(q_iters):
@@ -270,22 +270,26 @@ class TRPCA:
                 Diff = Pb_f - Q_curr + W4b_f/mu
                 QD = torch.matmul(Q_curr, right_batch)
                 
+                # 梯度计算
                 Grad = 2 * gama * QL - mu * Diff + 2 * lambda_val * QD
                 
-                Grad_r = torch.clamp(Grad.real, -1e5, 1e5)
-                Grad_i = torch.clamp(Grad.imag, -1e5, 1e5)
-                if torch.is_complex(Grad):
-                    Grad = torch.complex(Grad_r, Grad_i)
-                else:
-                    Grad = Grad_r
-                
+                # 梯度更新
                 Q_curr = Q_curr - q_lr * Grad
                 
+                # --- 修改 2: 加入强制投影 (Hard Projection) ---
+                # 计算当前的约束值 tr(Q D Q^H)
                 QDQ = torch.matmul(Q_curr, torch.matmul(right_batch, Q_curr.conj().transpose(1,2)))
                 tr_val = torch.real(torch.sum(torch.diagonal(QDQ, dim1=1, dim2=2)))
                 
-                grad_lambda = tr_val - 1
-                lambda_val = lambda_val + q_lr * grad_lambda
+                # 强制归一化！这是旧代码收敛的核心秘诀
+                # 如果 tr_val != 1, 也就是不满足约束，强行缩放 Q 让它满足
+                if tr_val > 1e-8: # 防止除以0
+                    scale = 1.0 / torch.sqrt(tr_val)
+                    Q_curr = Q_curr * scale
+                
+                # 更新 lambda (此时 tr_val 已经被强行变为 1，lambda 更新其实可以变缓，但保留逻辑无妨)
+                # grad_lambda = tr_val - 1 
+                # lambda_val = lambda_val + q_lr * grad_lambda
             
             Q_new = torch.fft.ifft(Q_curr.permute(1,2,0), dim=2).real
 
@@ -328,7 +332,9 @@ class TRPCA:
             
             # 加上 (mu/2) * ||Resid||^2
             # 注意：这就是 ADMM 真正优化的那个“总能量”
-            lagrangian_obj = obj_nuc + obj_sparse + (mu / 2) * resid_norm_sq
+            # --- 修正后的完整目标函数计算 ---
+            # 包含：核范数 + 稀疏项 + 判别项 + 图正则项 + 误差惩罚项
+            lagrangian_obj = obj_nuc + obj_sparse + obj_discr + obj_graph + (mu / 2) * resid_norm_sq
             
             # 记录这个值，它大概率是单调下降的
             obj_history.append(lagrangian_obj)
@@ -455,85 +461,84 @@ if __name__ == '__main__':
     N_train = x_train.shape[1]
 
     # 4. 构图 (默认使用 EMD 以保证精度，虽然慢)
-    # print("Constructing Graph (Using EMD)...")
-    # try:
-    #     ret_half = train_test_tensor_half(PATCH_SIZE, random_idx, image, label)
-    #     x_train_W = ret_half[0]
-    #     ci = []
-    #     b_dim = x_train_W[0].shape[2]
-    #     print("  - Calculating Covariance Descriptors...")
-    #     for i in range(len(x_train_W)):
-    #         c_matrix = torch.zeros((b_dim, b_dim))
-    #         xt = x_train_W[i]
-    #         if not torch.is_tensor(xt): xt = torch.from_numpy(xt).float()
-    #         ui = torch.mean(xt, dim=(0, 1), keepdim=True)
-    #         ui1 = ui.reshape(b_dim, -1)
-    #         for m in range(PATCH_SIZE):
-    #             for n in range(PATCH_SIZE):
-    #                 xt1 = xt[m, n, :].reshape(b_dim, -1)
-    #                 diff = xt1 - ui1
-    #                 c_matrix = c_matrix + torch.matmul(diff, diff.T)
-    #         c_matrix = c_matrix / (PATCH_SIZE * PATCH_SIZE - 1)
-    #         ci.append(c_matrix)
-        
-    #     print("  - Calculating EMD Distances...")
-    #     w_mat, d_mat = dist_EMD(x_train_W, ci, 10, 1000)
-    #     print("Graph constructed.")
-    # except Exception as e:
-    #     print(f"Graph failed: {e}. Using Identity matrix.")
-    #     w_mat = np.eye(N_train)
-    #     d_mat = np.eye(N_train)
-
-# 4. 构图 (使用欧氏距离替代 EMD 以加速)
-    print("Constructing Graph (Using Euclidean Distance)...")
+    print("Constructing Graph (Using EMD)...")
     try:
-        from sklearn.metrics import pairwise_distances
-        from scipy.spatial.distance import squareform, pdist
-        import numpy as np
+        ret_half = train_test_tensor_half(PATCH_SIZE, random_idx, image, label)
+        x_train_W = ret_half[0]
+        ci = []
+        b_dim = x_train_W[0].shape[2]
+        print("  - Calculating Covariance Descriptors...")
+        for i in range(len(x_train_W)):
+            c_matrix = torch.zeros((b_dim, b_dim))
+            xt = x_train_W[i]
+            if not torch.is_tensor(xt): xt = torch.from_numpy(xt).float()
+            ui = torch.mean(xt, dim=(0, 1), keepdim=True)
+            ui1 = ui.reshape(b_dim, -1)
+            for m in range(PATCH_SIZE):
+                for n in range(PATCH_SIZE):
+                    xt1 = xt[m, n, :].reshape(b_dim, -1)
+                    diff = xt1 - ui1
+                    c_matrix = c_matrix + torch.matmul(diff, diff.T)
+            c_matrix = c_matrix / (PATCH_SIZE * PATCH_SIZE - 1)
+            ci.append(c_matrix)
         
-        # 确保 x_train 是 numpy 格式 (N_samples, n_features)
-        # 如果 x_train 是 Tensor，先转为 numpy
-        if torch.is_tensor(x_train):
-            X_input = x_train.cpu().detach().numpy()
-        else:
-            X_input = x_train
-
-        # --- 1. 计算欧氏距离矩阵 (d_mat) ---
-        # 计算所有样本对之间的欧式距离
-        d_mat = pairwise_distances(X_input, metric='euclidean')
-        
-        # --- 2. 构建权重矩阵 (w_mat) ---
-        # 通常使用 KNN + 热核函数 (Heat Kernel)
-        k_neighbors = 10     # 近邻数，通常取 5-15
-        sigma = 1.0          # 核宽参数 (t)，可根据数据调整，常用 1.0 或距离的平均值
-        
-        N = X_input.shape[0]
-        w_mat = np.zeros((N, N))
-        
-        # 对每个样本找到最近的 k 个邻居
-        # argsort 得到的是索引，从小到大排序
-        sorted_indices = np.argsort(d_mat, axis=1)
-        
-        for i in range(N):
-            # 取前 k+1 个 (包含自己，自己是第0个，距离为0)
-            # 或者从 1 开始取 k 个 (排除自己)
-            neighbors = sorted_indices[i, 1:k_neighbors+1] 
-            
-            for j in neighbors:
-                dist = d_mat[i, j]
-                # 计算热核权重: exp(-dist^2 / 2*sigma^2)
-                weight = np.exp(-(dist**2) / (2 * (sigma**2)))
-                
-                # 赋值 (无向图通常保持对称)
-                w_mat[i, j] = weight
-                w_mat[j, i] = weight
-
-        print("Graph constructed (Euclidean + KNN).")
-        
+        print("  - Calculating EMD Distances...")
+        w_mat, d_mat = dist_EMD(x_train_W, ci, 10, 1000)
+        print("Graph constructed.")
     except Exception as e:
         print(f"Graph failed: {e}. Using Identity matrix.")
         w_mat = np.eye(N_train)
         d_mat = np.eye(N_train)
+
+# 4. 构图 (使用欧氏距离替代 EMD 以加速)
+    # print("Constructing Graph (Using Euclidean Distance)...")
+    # try:
+    #     from sklearn.metrics import pairwise_distances
+    #     from scipy.spatial.distance import squareform, pdist
+    #     import numpy as np
+        
+    #     # 确保 x_train 是 numpy 格式 (N_samples, n_features)
+    #     # 如果 x_train 是 Tensor，先转为 numpy
+    #     if torch.is_tensor(x_train):
+    #         X_input = x_train.cpu().detach().numpy()
+    #     else:
+    #         X_input = x_train
+
+    #     # --- 1. 计算欧氏距离矩阵 (d_mat) ---
+    #     # 计算所有样本对之间的欧式距离
+    #     d_mat = pairwise_distances(X_input, metric='euclidean')
+        
+    #     # --- 2. 构建权重矩阵 (w_mat) ---
+    #     # 通常使用 KNN + 热核函数 (Heat Kernel)
+    #     k_neighbors = 10     # 近邻数，通常取 5-15
+    #     sigma = 1.0          # 核宽参数 (t)，可根据数据调整，常用 1.0 或距离的平均值
+        
+    #     N = X_input.shape[0]
+    #     w_mat = np.zeros((N, N))
+        
+    #     # 对每个样本找到最近的 k 个邻居
+    #     # argsort 得到的是索引，从小到大排序
+    #     sorted_indices = np.argsort(d_mat, axis=1)
+        
+    #     for i in range(N):
+    #         # 取前 k+1 个 (包含自己，自己是第0个，距离为0)
+    #         # 或者从 1 开始取 k 个 (排除自己)
+    #         neighbors = sorted_indices[i, 1:k_neighbors+1] 
+            
+    #         for j in neighbors:
+    #             dist = d_mat[i, j]
+    #             # 计算热核权重: exp(-dist^2 / 2*sigma^2)
+    #             weight = np.exp(-(dist**2) / (2 * (sigma**2)))
+                
+    #             # 赋值 (无向图通常保持对称)
+    #             w_mat[i, j] = weight
+    #             w_mat[j, i] = weight
+
+    #     print("Graph constructed (Euclidean + KNN).")
+    # except Exception as e:
+    #     print(f"Graph failed: {e}. Using Identity matrix.")
+    #     w_mat = np.eye(N_train)
+    #     d_mat = np.eye(N_train)
 
     # 5. 【极速优化版】计算 Laplacian Matrices
     print("Calculating Laplacian Matrices (Vectorized)...")
