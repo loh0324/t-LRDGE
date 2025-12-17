@@ -124,7 +124,7 @@ class TRPCA:
         rho = 1.1
         mu = 1
         mu_max = 1e10
-        max_iters = 100
+        max_iters = 1
         lamb = 1
         beita = 1
         gama = 1
@@ -276,7 +276,7 @@ class TRPCA:
             loss.append(total_residual)
             print(f"Iter {iters}: Total Residual={total_residual:.6f}, mu={mu:.2e}")
             if self.converged(M, L, E, P, W, G, X, M_new, L_new, E_new,P_new,W_new,G_new) or iters >= max_iters:
-                return M_new, L_new, E_new, P_new, W_new,G_new,Q_new
+                return M_new, L_new, E_new, P_new, W_new,G_new,Q_new,loss
             else:
                 M, L, E, P, W, G, Q= M_new, L_new, E_new, P_new, W_new,G_new,Q_new
                 torch.set_printoptions(precision=12)
@@ -830,32 +830,62 @@ if __name__ =='__main__':
         x_train, train_label, x_test, test_label, train_label_list, test_label_list = train_test_tensor_fold(PATCH_SIZE,random_idx, image, label)
         ours = TRPCA()
     
-        '''计算临近点'''
-        x_train_W, _, _, _ = train_test_tensor_half(PATCH_SIZE,random_idx, image, label)
-        l = len(x_train_W)
-        ci = []
-        b = x_train_W[0].shape[2]
-        for i in range(l):
-            c_matrix = torch.zeros((b, b))
-            xt = x_train_W[i]
-            ui = torch.mean(xt, dim=(0, 1), keepdim=True)
-            ui1 = ui.reshape(b, -1)
-            for m in range(9):
-                for n in range(9):
-                    xt1 = xt[m, n, :].reshape(b, -1)
-                    c_matrix = c_matrix + torch.matmul(xt1 - ui1, (xt1 - ui1).T)
-            c_matrix = c_matrix / 80
-            ci.append(c_matrix)
-        t = 1000
-        k_near = 10
-        w, d = dist_EMD(x_train_W, ci, k_near, t)
-        # np.save('w-1000-indian', w)
-        # np.save('d-1000-indian', d)
-        X_train_fft_list = []
-        for i in range(x_train.shape[1]):
-            x = x_train[:, i, :].reshape(b, 1, 81)
-            x = ours.block_diagonal_fft(x)
-            X_train_fft_list.append(x)
+    #欧式构图用于test
+        print("正在使用欧氏距离构建 KNN 图 (快速模式)...")
+        # 1. 准备数据：将 x_train_W (Patch列表) 转换为特征矩阵
+        # x_train_W[i] 形状通常是 (Patch_H, Patch_W, Bands)
+        # 我们将其展平作为该样本的特征向量
+        num_samples = len(x_train_W)
+        features_list = []
+        for i in range(num_samples):
+            # 将 patch 展平为一维向量
+            flat_feat = x_train_W[i].flatten() 
+            features_list.append(flat_feat)
+        features = np.array(features_list) # 形状: (样本数, 特征维度)
+
+        # 2. 计算两两欧氏距离矩阵
+        from scipy.spatial.distance import pdist, squareform
+        dist_mat = squareform(pdist(features, metric='euclidean'))
+        k_near = 10 # 邻居数
+        w = np.zeros((num_samples, num_samples))
+        sigma = np.mean(dist_mat) 
+        for i in range(num_samples):
+            sorted_indices = np.argsort(dist_mat[i])
+            neighbors = sorted_indices[1:k_near+1]
+            for j in neighbors:
+                dist = dist_mat[i, j]
+                weight = np.exp(-(dist**2) / (2 * sigma**2))
+                w[i, j] = weight
+                w[j, i] = weight # 保持对称性
+        d = np.diag(np.sum(w, axis=1))
+        print("构图完成。")
+
+        # '''计算临近点'''
+        # x_train_W, _, _, _ = train_test_tensor_half(PATCH_SIZE,random_idx, image, label)
+        # l = len(x_train_W)
+        # ci = []
+        # b = x_train_W[0].shape[2]
+        # for i in range(l):
+        #     c_matrix = torch.zeros((b, b))
+        #     xt = x_train_W[i]
+        #     ui = torch.mean(xt, dim=(0, 1), keepdim=True)
+        #     ui1 = ui.reshape(b, -1)
+        #     for m in range(9):
+        #         for n in range(9):
+        #             xt1 = xt[m, n, :].reshape(b, -1)
+        #             c_matrix = c_matrix + torch.matmul(xt1 - ui1, (xt1 - ui1).T)
+        #     c_matrix = c_matrix / 80
+        #     ci.append(c_matrix)
+        # t = 1000
+        # k_near = 10
+        # w, d = dist_EMD(x_train_W, ci, k_near, t)
+        # # np.save('w-1000-indian', w)
+        # # np.save('d-1000-indian', d)
+        # X_train_fft_list = []
+        # for i in range(x_train.shape[1]):
+        #     x = x_train[:, i, :].reshape(b, 1, 81)
+        #     x = ours.block_diagonal_fft(x)
+        #     X_train_fft_list.append(x)
     
         left, right = ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
         np.save('left-1000-indian',left)
@@ -863,7 +893,7 @@ if __name__ =='__main__':
         left = torch.from_numpy(left)
         right = torch.from_numpy(right)
     
-        M, L, E, P, W, G, Q = ours.ADMM(left, right, x_train, train_label)
+        M, L, E, P, W, G, Q, loss_list = ours.ADMM(left, right, x_train, train_label)
         X_train_reduced = ours.T_product(P, x_train)
         X_train_reduced1 = ours.T_product(P, L)
         X_train_reduced_Q = ours.T_product(Q, x_train)
