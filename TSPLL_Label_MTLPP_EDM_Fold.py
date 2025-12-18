@@ -124,7 +124,7 @@ class TRPCA:
         rho = 1.1
         mu = 1
         mu_max = 1e10
-        max_iters = 1
+        max_iters = 100
         lamb = 1
         beita = 1
         gama = 1
@@ -830,35 +830,35 @@ if __name__ =='__main__':
         x_train, train_label, x_test, test_label, train_label_list, test_label_list = train_test_tensor_fold(PATCH_SIZE,random_idx, image, label)
         ours = TRPCA()
     
-    #欧式构图用于test
-        print("正在使用欧氏距离构建 KNN 图 (快速模式)...")
-        # 1. 准备数据：将 x_train_W (Patch列表) 转换为特征矩阵
-        # x_train_W[i] 形状通常是 (Patch_H, Patch_W, Bands)
-        # 我们将其展平作为该样本的特征向量
-        num_samples = len(x_train_W)
-        features_list = []
-        for i in range(num_samples):
-            # 将 patch 展平为一维向量
-            flat_feat = x_train_W[i].flatten() 
-            features_list.append(flat_feat)
-        features = np.array(features_list) # 形状: (样本数, 特征维度)
+    # #欧式构图用于test
+    #     print("正在使用欧氏距离构建 KNN 图 (快速模式)...")
+    #     # 1. 准备数据：将 x_train_W (Patch列表) 转换为特征矩阵
+    #     # x_train_W[i] 形状通常是 (Patch_H, Patch_W, Bands)
+    #     # 我们将其展平作为该样本的特征向量
+    #     num_samples = len(x_train_W)
+    #     features_list = []
+    #     for i in range(num_samples):
+    #         # 将 patch 展平为一维向量
+    #         flat_feat = x_train_W[i].flatten() 
+    #         features_list.append(flat_feat)
+    #     features = np.array(features_list) # 形状: (样本数, 特征维度)
 
-        # 2. 计算两两欧氏距离矩阵
-        from scipy.spatial.distance import pdist, squareform
-        dist_mat = squareform(pdist(features, metric='euclidean'))
-        k_near = 10 # 邻居数
-        w = np.zeros((num_samples, num_samples))
-        sigma = np.mean(dist_mat) 
-        for i in range(num_samples):
-            sorted_indices = np.argsort(dist_mat[i])
-            neighbors = sorted_indices[1:k_near+1]
-            for j in neighbors:
-                dist = dist_mat[i, j]
-                weight = np.exp(-(dist**2) / (2 * sigma**2))
-                w[i, j] = weight
-                w[j, i] = weight # 保持对称性
-        d = np.diag(np.sum(w, axis=1))
-        print("构图完成。")
+    #     # 2. 计算两两欧氏距离矩阵
+    #     from scipy.spatial.distance import pdist, squareform
+    #     dist_mat = squareform(pdist(features, metric='euclidean'))
+    #     k_near = 10 # 邻居数
+    #     w = np.zeros((num_samples, num_samples))
+    #     sigma = np.mean(dist_mat) 
+    #     for i in range(num_samples):
+    #         sorted_indices = np.argsort(dist_mat[i])
+    #         neighbors = sorted_indices[1:k_near+1]
+    #         for j in neighbors:
+    #             dist = dist_mat[i, j]
+    #             weight = np.exp(-(dist**2) / (2 * sigma**2))
+    #             w[i, j] = weight
+    #             w[j, i] = weight # 保持对称性
+    #     d = np.diag(np.sum(w, axis=1))
+    #     print("构图完成。")
 
         # '''计算临近点'''
         # x_train_W, _, _, _ = train_test_tensor_half(PATCH_SIZE,random_idx, image, label)
@@ -887,9 +887,11 @@ if __name__ =='__main__':
         #     x = ours.block_diagonal_fft(x)
         #     X_train_fft_list.append(x)
     
-        left, right = ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
-        np.save('left-1000-indian',left)
-        np.save('right-1000-indian',right)
+        # left, right = ours.getyi_yj(X_train_fft_list, w, d)  # (9,9)
+        # np.save('left-1000-indian',left)
+        # np.save('right-1000-indian',right)
+        left = np.load('left-1000-indian.npy')
+        right = np.load('right-1000-indian.npy')
         left = torch.from_numpy(left)
         right = torch.from_numpy(right)
     
