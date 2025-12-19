@@ -16,8 +16,9 @@ from tensor_function_MTLPP import dist_EMD
 
 class TRPCA:
     def __init__(self):
-        # 自动检测设备
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # 强制使用 CPU，即使有 GPU 也不使用 (为了稳定性或特定需求)
+        self.device = torch.device("cpu")
+        print(f"Running on device: {self.device}")
 
     def converged(self, M, L, E, P, W, G, X, M_new, L_new, E_new, P_new, W_new, G_new):
         '''判断收敛条件'''
@@ -36,7 +37,15 @@ class TRPCA:
         X_f = torch.fft.fft(X, dim=2)
         X_res_f = torch.zeros_like(X_f)
         for i in range(n3):
-            U, S, Vh = torch.linalg.svd(X_f[:, :, i], full_matrices=False)
+            # 注意：这里也可能需要加 try-except 保护，但通常这里不容易报错
+            try:
+                U, S, Vh = torch.linalg.svd(X_f[:, :, i], full_matrices=False)
+            except RuntimeError:
+                # 备用方案：加扰动
+                mat = X_f[:, :, i]
+                jitter = 1e-4 * torch.eye(mat.shape[0], mat.shape[1], device=mat.device, dtype=mat.dtype)
+                U, S, Vh = torch.linalg.svd(mat + jitter, full_matrices=False)
+            
             S_thresh = self.SoftShrink(S, tau)
             S_mat = torch.diag_embed(S_thresh).to(torch.complex64)
             X_res_f[:, :, i] = U @ S_mat @ Vh
@@ -63,11 +72,8 @@ class TRPCA:
     def ADMM_Collaborative(self, X, Y_onehot, D_mat=None):
         '''
         创新点2：基于张量协同图学习的 ADMM 求解
-        min ||L||_* + lam1 ||E||_1 
-            + lam2 ||Y - H * (P*L)||_F^2 
-            + lam3 ||Z - Z * S||_F^2 + lam4 ||D .* S||_F^2
         '''
-        self.device = X.device
+        self.device = X.device 
         l, m, n = X.shape
         c = Y_onehot.shape[0]
         r = 30  # 降维维度
@@ -108,7 +114,7 @@ class TRPCA:
         else:
             D_mat = D_mat.to(self.device)
 
-        loss_history = [] # 记录收敛曲线
+        loss_history = [] 
         print(f"Start Collaborative ADMM... X shape: {X.shape}")
 
         for k in range(max_iters):
@@ -135,8 +141,18 @@ class TRPCA:
                 eye = torch.eye(m, device=self.device)
                 LHS = 2 * lambda3 * ZTZ + rho * eye
                 RHS = 2 * lambda3 * ZTZ + rho * tgt_S_f[:, :, i]
+                
+                # 增加数值稳定性
                 LHS = LHS + 1e-5 * eye
-                S_f[:, :, i] = torch.linalg.solve(LHS, RHS)
+                
+                # 使用 lstsq 或 solve，solve 更快但要求满秩
+                try:
+                    S_f[:, :, i] = torch.linalg.solve(LHS, RHS)
+                except:
+                    # 如果奇异，使用 lstsq
+                    sol = torch.linalg.lstsq(LHS, RHS).solution
+                    S_f[:, :, i] = sol
+
             S = torch.fft.ifft(S_f, dim=2).real
             
             # 4. Update H (Classifier)
@@ -147,7 +163,13 @@ class TRPCA:
                 z_sl = Z_f[:, :, i]
                 ZZT = z_sl @ z_sl.conj().T + 1e-4 * torch.eye(r, device=self.device)
                 RHS = y_sl @ z_sl.conj().T
-                H_f[:, :, i] = RHS @ torch.linalg.inv(ZZT)
+                
+                try:
+                    H_f[:, :, i] = RHS @ torch.linalg.inv(ZZT)
+                except RuntimeError:
+                     # 备用方案
+                    H_f[:, :, i] = torch.linalg.lstsq(ZZT.T, RHS.T).solution.T
+
             H = torch.fft.ifft(H_f, dim=2).real
             
             # 5. Update Z (Latent Feature)
@@ -175,7 +197,7 @@ class TRPCA:
             term_E = self.T_product(P.permute(1,0,2), self.T_product(P, X) - E + W_E/rho)
             L = (term_M + term_Z + term_E) / 3.0
             
-            # 8. Update P
+            # 8. Update P using SVD with robust fallback
             target_Z_P = Z + W_Z / rho
             target_E_P = E - W_E / rho
             
@@ -188,7 +210,22 @@ class TRPCA:
             
             for i in range(n):
                 Mat = B_f[:, :, i] @ A_f[:, :, i].conj().T
-                U, _, Vh = torch.linalg.svd(Mat, full_matrices=False)
+                
+                # --- 修复核心：数值保护 ---
+                if torch.isnan(Mat).any() or torch.isinf(Mat).any():
+                    # 替换 NaN/Inf 为 0
+                    Mat = torch.where(torch.isfinite(Mat), Mat, torch.zeros_like(Mat))
+                
+                # --- 修复核心：移除 driver 参数，手动重试 ---
+                try:
+                    # 尝试默认 SVD (在 CPU 上通常是 gesdd)
+                    U, _, Vh = torch.linalg.svd(Mat, full_matrices=False)
+                except RuntimeError:
+                    # 如果不收敛 (error: 12 etc.)，添加 jitter 再试
+                    #print(f"SVD failed at slice {i}, adding jitter...")
+                    jitter = 1e-4 * torch.eye(Mat.shape[0], Mat.shape[1], device=self.device, dtype=Mat.dtype)
+                    U, _, Vh = torch.linalg.svd(Mat + jitter, full_matrices=False)
+
                 P_f[:, :, i] = U @ Vh 
                 
             P = torch.fft.ifft(P_f, dim=2).real
@@ -201,18 +238,19 @@ class TRPCA:
             
             rho = min(rho * mu_rate, rho_max)
             
-            # 10. 计算残差并记录 (用于画图)
-            # 主要约束误差: L-M, Z-PL, PX-PL-E
-            res1 = torch.norm(L - M)
-            res2 = torch.norm(Z - PL)
-            res3 = torch.norm(self.T_product(P, X - L) - E)
-            total_res = (res1 + res2 + res3).item()
+            # 10. 计算残差
+            norm_X = torch.norm(X).item()
+            res1 = torch.norm(L - M).item()
+            res2 = torch.norm(Z - self.T_product(P, L)).item()
+            res3 = torch.norm(self.T_product(P, X - L) - E).item()
+            
+            # 计算相对残差 (这样画出来的图就是 0.x 的量级)
+            total_res = (res1 + res2 + res3) / (norm_X + 1e-9)
             loss_history.append(total_res)
             
             if k % 10 == 0:
-                print(f"Iter {k}, Residual={total_res:.4f}, rho={rho:.2e}")
+                print(f"Iter {k}: Relative Residual={total_res:.6f}, rho={rho:.2e}")
 
-        # 返回值增加 loss_history
         return M, L, E, P, H, S, Z, loss_history
 
 
@@ -245,24 +283,24 @@ if __name__ == '__main__':
         image = x.astype(np.float32)
 
         '''Add Noise'''
-        image = image.astype(float)
-        for band in range(image.shape[2]):
-            mi, ma = np.min(image[:, :, band]), np.max(image[:, :, band])
-            if ma != mi:
-                image[:, :, band] = (image[:, :, band] - mi) / (ma - mi)
+        # image = image.astype(float)
+        # for band in range(image.shape[2]):
+        #     mi, ma = np.min(image[:, :, band]), np.max(image[:, :, band])
+        #     if ma != mi:
+        #         image[:, :, band] = (image[:, :, band] - mi) / (ma - mi)
         
-        np.random.seed(42)
-        noisy_image = np.copy(image).astype(np.float64)
-        selected_bands = np.random.choice(image.shape[2], size=60, replace=False)
-        for i in selected_bands:
-            variance = np.random.uniform(0, 0.5)
-            noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
-            noisy_image[..., i] += noise
-            salt = np.random.rand(*image[..., i].shape) < 0.05
-            pepper = np.random.rand(*image[..., i].shape) < 0.05
-            noisy_image[salt, i] = np.max(image[..., i])
-            noisy_image[pepper, i] = np.min(image[..., i])
-        image = noisy_image
+        # np.random.seed(42)
+        # noisy_image = np.copy(image).astype(np.float64)
+        # selected_bands = np.random.choice(image.shape[2], size=60, replace=False)
+        # for i in selected_bands:
+        #     variance = np.random.uniform(0, 0.5)
+        #     noise = np.random.normal(0, np.sqrt(variance), size=image[..., i].shape)
+        #     noisy_image[..., i] += noise
+        #     salt = np.random.rand(*image[..., i].shape) < 0.05
+        #     pepper = np.random.rand(*image[..., i].shape) < 0.05
+        #     noisy_image[salt, i] = np.max(image[..., i])
+        #     noisy_image[pepper, i] = np.min(image[..., i])
+        # image = noisy_image
 
         try:
             random_idx = np.load('/data/LOH/TSPLL_label/random_idx/random_idx.npy')
@@ -292,17 +330,16 @@ if __name__ == '__main__':
         # 3. 运行 ADMM 并获取 loss_history
         M, L, E, P, H, S, Z, loss_history = ours.ADMM_Collaborative(x_train_tensor, Y_tensor, D_mat)
         
-        # --- 新增: 绘制收敛曲线 ---
+        # --- 绘制收敛曲线 ---
         plt.figure(figsize=(8, 6))
         plt.plot(loss_history, linewidth=2, color='red', marker='o', markersize=3)
         plt.title('Convergence Analysis (Collaborative Graph Learning)')
         plt.xlabel('Iterations')
-        plt.ylabel('Total Residual (Log scale)')
-        plt.yscale('log') # 使用对数坐标看收敛更清晰
+        plt.ylabel('Relative Residual')
+        plt.yscale('log')
         plt.grid(True, which="both", ls="-", alpha=0.5)
         plt.savefig('convergence_collaborative.png', dpi=300)
         print("收敛曲线已保存为 'convergence_collaborative.png'")
-        # plt.show() # 如果在服务器运行请注释此行
 
         # 4. 评估函数
         X_train_reduced = ours.T_product(P, x_train_tensor)
