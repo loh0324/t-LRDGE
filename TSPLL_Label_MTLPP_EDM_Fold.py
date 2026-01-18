@@ -124,7 +124,7 @@ class TRPCA:
         rho = 1.1
         mu = 1
         mu_max = 1e10
-        max_iters = 100
+        max_iters = 30
         lamb = 1
         beita = 1
         gama = 1
@@ -987,7 +987,7 @@ if __name__ =='__main__':
                 'kappa': precision_Kappa
             }
             return precision, label_matrix
-    
+        
         plt.figure(figsize=(8, 6))
         plt.plot(range(1, len(loss_list) + 1), loss_list, linewidth=2, color='red', marker='o', markersize=3)
         plt.xlabel('Iterations')
