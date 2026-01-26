@@ -11,9 +11,46 @@ from tensor_function_MTLPP import dist_EMD
 import matplotlib.pyplot as plt
 from scipy.io import loadmat
 import spectral as spy
+from sklearn.manifold import TSNE
+import seaborn as sns
 
+def plot_tsne(features, labels, title, save_path):
+    """
+    使用 t-SNE 将高维特征降维到 2D 并可视化
+    features: Tensor 或 ndarray, 形状为 (N_samples, Dim)
+    labels: 列表或 ndarray, 类别标签
+    """
+    # 确保数据在 CPU 上并转为 numpy
+    if torch.is_tensor(features):
+        features = features.detach().cpu().numpy()
+    
+    # 执行 t-SNE
+    tsne = TSNE(n_components=2, random_state=42, init='pca', learning_rate='auto')
+    X_embedded = tsne.fit_transform(features)
+    
+    # 绘图
+    plt.figure(figsize=(10, 8))
+    unique_labels = np.unique(labels)
+    # 使用丰富的调色板
+    palette = sns.color_palette("hls", len(unique_labels))
+    
+    sns.scatterplot(
+        x=X_embedded[:, 0], y=X_embedded[:, 1],
+        hue=labels,
+        palette=palette,
+        legend='full',
+        alpha=0.8,
+        s=60
+    )
+    plt.title(f't-SNE Visualization: {title}')
+    plt.xlabel('t-SNE dimension 1')
+    plt.ylabel('t-SNE dimension 2')
+    plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+    plt.grid(True, linestyle='--', alpha=0.6)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.show()
+    print(f"t-SNE 图已保存至: {save_path}")
 class TRPCA:
-
     def converged(self, M, L, E, P, W, G, X, M_new, L_new, E_new,P_new,W_new,G_new):
         '''M, L, E, P, X, M_new, L_new, E_new,P_new
         judge convered or not
@@ -432,6 +469,18 @@ if __name__ =='__main__':
         X_test_reduced = ours.T_product(P, x_test)
         X_test_reduced_Q = ours.T_product(Q, x_test)
 
+        
+        # 1. 获取降维后的特征并展平
+        # X_train_reduced 形状为 (r, N_train, n3) -> 展平为 (N_train, r * n3)
+        N_train = x_train.shape[1]
+        X_train_flat = X_train_reduced.permute(1, 0, 2).reshape(N_train, -1)
+        
+        # 2. 调用 t-SNE 可视化 (以 P*X 的特征为例)
+        dataset_name = "LongKou"
+        tsne_save_path = f'/data/LOH/TSPLL_label/Classification maps/t-SNE/tsne_{dataset_name}_PX.png'
+        plot_tsne(X_train_flat, train_label_list, f"{dataset_name} (Reduced Features P*X)", tsne_save_path)
+
+
         def nn_unique(x_train, train_label, x_test, test_label, random, label):
             computedClass = []
             D = np.zeros((x_test.shape[1], x_train.shape[1]))
@@ -670,7 +719,16 @@ if __name__ =='__main__':
         X_test_reduced = ours.T_product(P, x_test)
         X_test_reduced_Q = ours.T_product(Q, x_test)
     
-    
+        # 1. 获取降维后的特征并展平
+        # X_train_reduced 形状为 (r, N_train, n3) -> 展平为 (N_train, r * n3)
+        N_train = x_train.shape[1]
+        X_train_flat = X_train_reduced.permute(1, 0, 2).reshape(N_train, -1)
+        
+        # 2. 调用 t-SNE 可视化 (以 P*X 的特征为例)
+        dataset_name = "salinas"
+        tsne_save_path = f'/data/LOH/TSPLL_label/Classification maps/t-SNE/tsne_{dataset_name}_PX.png'
+        plot_tsne(X_train_flat, train_label_list, f"{dataset_name} (Reduced Features P*X)", tsne_save_path)
+
 
         def nn_unique(x_train, train_label, x_test, test_label, random, label):
             computedClass = []
@@ -938,7 +996,16 @@ if __name__ =='__main__':
         X_test_reduced = ours.T_product(P, x_test)
         X_test_reduced_Q = ours.T_product(Q, x_test)
     
-    
+        # 1. 获取降维后的特征并展平
+        # X_train_reduced 形状为 (r, N_train, n3) -> 展平为 (N_train, r * n3)
+        N_train = x_train.shape[1]
+        X_train_flat = X_train_reduced.permute(1, 0, 2).reshape(N_train, -1)
+        
+        # 2. 调用 t-SNE 可视化 (以 P*X 的特征为例)
+        dataset_name = "indian_pines"
+        tsne_save_path = f'/data/LOH/TSPLL_label/Classification maps/t-SNE/tsne_{dataset_name}_PX.png'
+        plot_tsne(X_train_flat, train_label_list, f"{dataset_name} (Reduced Features P*X)", tsne_save_path)
+
         def nn_unique(x_train, train_label, x_test, test_label, random, label):
             computedClass = []
             D = np.zeros((x_test.shape[1], x_train.shape[1]))
